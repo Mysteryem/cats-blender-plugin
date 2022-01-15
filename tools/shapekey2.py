@@ -1,6 +1,5 @@
 import bpy
 import numpy as np
-import time
 from .register import register_wrap
 
 # Issues with CATS' implementation
@@ -43,54 +42,6 @@ class ShapeKeyApplier(bpy.types.Operator):
 
     # TODO: Figure out how properties can be defined with Cats such that 2.7x and 2.8x+ can be supported
     use_multi_add: bpy.props.BoolProperty(name="Use multi-shape add")
-
-    mine = """
-def test_mine(count,use_multi_add):
-    start = time.perf_counter()
-    for i in range(count):
-        bpy.ops.mysteryem.fast_apply_selected_shape_key_to_relative_key(use_multi_add=use_multi_add)
-    end = time.perf_counter()
-    time_diff = end - start
-    print(f'Took {1000 * time_diff/count} ms per operation')
-"""
-    cats = """
-def test_cats(count):
-    start = time.perf_counter()
-    for i in range(count):
-        bpy.ops.cats_shapekey.shape_key_to_basis()
-        bpy.context.object.active_shape_key_index = 1
-    end = time.perf_counter()
-    time_diff = end - start
-    print(f'Took {1000 * time_diff/count} ms per operation')
-"""
-    big_test = """
-def big_test(count):
-    obj = bpy.context.object
-    results = {}
-    shape_names = []
-    #warmup
-    warmer = 0
-    elapsed_warmer = 0
-    warmer_start = time.perf_counter()
-    while elapsed_warmer < 10:
-        warmer = warmer + warmer * warmer
-        elapsed_warmer = time.perf_counter() - warmer_start
-    #start
-    for i in range(1,41):
-        start = time.perf_counter()
-        for j in range(count):
-            bpy.ops.cats_shapekey.shape_key_to_basis()
-            obj.active_shape_key_index = 1
-        end = time.perf_counter()
-        results[i] = (end - start) * 1000 / count
-        shape_names.append(obj.shape_key_add(name=f'test_{i+1}', from_mix=False).name)
-    for shape_name in shape_names:
-        obj.shape_key_remove(obj.data.shape_keys.key_blocks[shape_name])
-    obj.active_shape_key_index = 1
-    for num_shapes, time_per in results.items():
-        print(f'{time_per}')
-    print(warmer)
-"""
 
     @classmethod
     def poll(cls, context):
@@ -301,9 +252,9 @@ def big_test(count):
         # Store shape key vertex positions for new_basis
         # There's no need to initialise the elements to anything since they will all be overwritten
         # Faster version of new_basis_co_flat = [None]*flattened_co_length
-        new_basis_co_flat = np.empty(flattened_co_length)
+        new_basis_co_flat = np.empty(flattened_co_length, dtype=float)
         # Faster version of new_basis_relative_co_flat = [None]*flattened_co_length
-        new_basis_relative_co_flat = np.empty(flattened_co_length)
+        new_basis_relative_co_flat = np.empty(flattened_co_length, dtype=float)
 
         new_basis_shapekey.data.foreach_get('co', new_basis_co_flat)
         new_basis_shapekey.relative_key.data.foreach_get('co', new_basis_relative_co_flat)
@@ -319,7 +270,7 @@ def big_test(count):
         # Scale the difference based on the vertex group of the active key
         #   An alternative would be to scale difference_co_flat by the weight of each vertex in new_basis_shapekey.vertex_group
         #   unfortunately, Blender has no efficient way to get all the weights for a particular vertex group, so it's
-        #   pretty much always multiple times faster to create a new shape from mix and get its 'co' with foreach_get(...)
+        #   pretty much always a few times faster to create a new shape from mix and get its 'co' with foreach_get(...)
         #   Tiny meshes, think <1000 vertices, are the exception.
         #
         #   For reference, the ways to get all vertex weights that you can find on stackoverflow:
@@ -328,11 +279,11 @@ def big_test(count):
         #           because for every vertex v, v.groups has to be iterated until either the vertex group is found or iteration finishes without finding the vertex group
         #               vertex_weights = [next((g.weight for g in v.groups if g.group == vertex_group_index), 0) for v in data.vertices]
         #
-        #           Weights from vertex group:
+        #       Weights from vertex group:
         #           This doesn't scale poorly with lots of vertex groups like the other way does, but, if most of the vertices aren't in the vertex group, relying on catching
         #           the exception is really slow. If Blender had a similar method that returned a default value or even just None instead of throwing an exception, this would
-        #           be much faster, though maybe still a little slower than creating a new key from mix (ideally we'd want a fast access method like foreach_set(...)) instead
-        #           of having to iterate
+        #           be much faster, though maybe still a little slower than creating a new key from mix (ideally we'd want a fast access method like foreach_get(...)) instead
+        #           of having to iterate through all the vertices individually
         #               vertex_weights = []
         #               for i in range(num_verts):
         #                   try:
@@ -359,6 +310,11 @@ def big_test(count):
 
             # TODO: Reuse an existing array instead of creating a new one?
             difference_co_flat_scaled = np.subtract(temp_shape_co_flat, temp_shape_relative_co_flat)
+
+            # Remove new_basis_mixed
+            active_index = mesh.active_shape_key_index
+            mesh.shape_key_remove(new_basis_mixed)
+            mesh.active_shape_key_index = active_index
         else:
             difference_co_flat_scaled = difference_co_flat_value_scaled
 
@@ -369,9 +325,25 @@ def big_test(count):
 
         if new_basis_affected_by_own_application:
             # All keys in keys_recursive_relative_to_new_basis must also be in keys_recursive_relative_to_basis
-            keys_not_relative_recursive_to_new_basis = keys_relative_recursive_to_basis - keys_relative_recursive_to_new_basis
+            keys_not_relative_recursive_to_new_basis_and_not_new_basis = (keys_relative_recursive_to_basis - keys_relative_recursive_to_new_basis) - {new_basis_shapekey}
 
-            for key_block in keys_not_relative_recursive_to_new_basis:
+            # TODO: This for loop is where most of the execution will happen for 'normal' setups of lots of shape keys relative to the first shape
+            #  Maybe multiprocessing could speed this up, if the overhead isn't too much, maybe to even faster than the multi_add function?
+            #  see https://docs.python.org/3/library/multiprocessing.html and https://docs.python.org/3/library/multiprocessing.html#multiprocessing.pool.Pool
+            # from multiprocessing import Pool
+            #
+            # def multiprocess_add_difference_co_flat_scaled(key_block):
+            #     # The issue with using multiprocess is that we can't share the same array for speed any more
+            #     co = np.empty(flattened_co_length, dtype=float)
+            #     key_block.data.foreach_get('co', co)
+            #     key_block.data.foreach_set('co', np.add(co, difference_co_flat_scaled, out=co))
+            # None gets count based on
+            # with Pool(None) as p:
+            #     # automatically picks size of chunks to break keys_not_relative_recursive_to_new_basis into
+            #     p.map(multiprocess_add_difference_co_flat_scaled, keys_not_relative_recursive_to_new_basis)
+            for key_block in keys_not_relative_recursive_to_new_basis_and_not_new_basis:
+                if key_block == new_basis_shapekey:
+                    print("no")
                 # DEBUG
                 # print('Adding shape key difference to {}'.format(key_block.name))
                 # Add difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
@@ -379,90 +351,56 @@ def big_test(count):
                 # Faster version of [key_co + difference_co for key_co, difference_co in zip(temp_co_array, difference_co_flat_scaled)]
                 key_block.data.foreach_set('co', np.add(temp_co_array, difference_co_flat_scaled, out=temp_co_array))
 
-            # If new_basis had a vertex_group, and we want to keep it on the reverted key
+            # We need the difference between r(NB) and r(NB).r to be the negative of
+            #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
+            #                             = -(NB - NB.r) * NB.v * NB.vg
+            # NB.vg cancels on both sides, leaving:
+            #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
+            # Rearranging for r(NB) gives:
+            #   r(NB) = r(NB).r - (NB - NB.r) * NB.v
+            # Note that (NB - NB.r) * NB.v = difference_co_flat_value_scaled so:
+            #   r(NB) = r(NB).r - difference_co_flat_value_scaled
+            # Note that r(NB).r = NB.r + difference_co_flat_scaled as we've added that to it
+            #   r(NB) = NB.r + difference_co_flat_scaled - difference_co_flat_value_scaled
+            # Note that r(NB) = NB + X where X is what we want to find to add to NB (and all keys relative to it
+            # so that their relative differences remain the same)
+            #   NB + X = NB.r + difference_co_flat_scaled - difference_co_flat_value_scaled
+            #   X = NB.r - NB + difference_co_flat_scaled - difference_co_flat_value_scaled
+            #   X = -(NB - NB.r) + difference_co_flat_scaled - difference_co_flat_value_scaled
+            # Fully expanding out would give:
+            #   X = -(NB - NB.r) + (NB - NB.r) * NB.v * NB.vg - (NB - NB.r) * NB.v
+            #
+            # In the case of there being a vertex group, it's too costly to calculate NB.vg on its own, so we'll leave it at
+            #   X = -(NB - NB.r) + difference_co_flat_scaled - (NB - NB.r) * NB.v
+            #   Which we can either factor to
+            #       X = (NB - NB.r)(-1 - NB.v) + difference_co_flat_scaled
+            #       X = difference_co_flat * (-1 - NB.v) + difference_co_flat_scaled
+            #   Or, as NB - NB.r = difference_co_flat, calculate as, which may be faster since it only uses addition/subtraction
+            #       X = -difference_co_flat + difference_co_flat_scaled - difference_co_flat_value_scaled
+            #
+            # From my own benchmarks, np.multiply(array1, scalar, out=output_array) starts to scale slightly better than
+            # np.add(array1, array2, out=output_array) once array1 gets to around 9000 elements or more
+            # I guess this is due to the fact that the add option needs to do 2 array accesses per element, and that
+            # eventually this surpasses the effect of the multiply operation being more expensive than the add operation
+            # In this case, the array length is 3*num_verts, meaning the multiplication option gets better at around
+            # 3000 vertices, so we'll use the multiplication option
             if new_basis_shapekey_vertex_group:
-                # If we're to leave the vertex group on the reverted key, the movement from applied(new_basis.relative_key) to reverted(new_basis) needs to equal the
-                # negated movement from (new_basis.relative_key to new_basis) multiplied by new_basis.vertex_group
-                # So (reverted_new_basis - reverted_new_basis.relative_key) * new_basis.vertex_group = -((new_basis - new_basis.relative_key) * new_basis.value * new_basis.vertex_group)
-                # Or in shorthand:
-                #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
-                #                             = -(NB - NB.r) * NB.v * NB.vg
-                # new_basis.vertex_group cancels on both sides, leaving:
-                #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
-                # Rearranging for r(NB) gives:
-                #   r(NB) = r(NB).r - (NB - NB.r) * NB.v
-                # Note that (NB - NB.r) * NB.v = difference_co_flat_value_scaled so:
-                #   r(NB) = r(NB).r - difference_co_flat_value_scaled
-
-                # Get r(NB).r (and store into temp_co_array2)
-                new_basis_shapekey.relative_key.data.foreach_get('co', temp_co_array2)
-
-                # Subtract difference_co_flat_value_scaled
-                reverted_key_flat_co = np.subtract(temp_co_array2, difference_co_flat_value_scaled, out=temp_co_array2)
-
-                # Set r(NB)
-                new_basis_shapekey.data.foreach_set('co', reverted_key_flat_co)
-
-                # The keys that are relative to new_basis need to be adjusted for the difference between new_basis and reverted(new_basis) so that their relative movement is still the same
-                #   Key_old - NB = Key_new - r(NB)
-                # rearranging:
-                #   Key_new = Key_old - NB + r(NB)
-                # Therefore,
-                difference_for_keys_relative_to_new_basis = np.subtract(reverted_key_flat_co, new_basis_co_flat, out=temp_co_array2)
-
-                for key_block in keys_relative_recursive_to_new_basis:
+                np.multiply(difference_co_flat, -1 - new_basis_shapekey.value, out=temp_co_array2)
+                np.add(temp_co_array2, difference_co_flat_scaled, out=temp_co_array2)
+                for key_block in keys_relative_recursive_to_new_basis | {new_basis_shapekey}:
                     key_block.data.foreach_get('co', temp_co_array)
-                    key_block.data.foreach_set('co', np.add(temp_co_array, difference_for_keys_relative_to_new_basis, out=temp_co_array))
+                    key_block.data.foreach_set('co', np.add(temp_co_array, temp_co_array2, out=temp_co_array))
+            # But for there not being a vertex group, the NB.vg term can be eliminated as it becomes effectively 1.0
+            #   X = -(NB - NB.r) + (NB - NB.r) * NB.v - (NB - NB.r) * NB.v
+            # Then the last part cancels out
+            #   X = -(NB - NB.r)
+            # Giving X = -difference_co_flat
             else:
-                # As we're ignoring the vertex group (or there isn't one), the movement from applied(new_basis.relative_key) to reverted(new_basis) needs to equal the
-                # negated movement from (new_basis.relative_key to new_basis)
-                # So (reverted_new_basis - reverted_new_basis.relative_key) = -((new_basis - new_basis.relative_key) * new_basis.value * new_basis.vertex_group)
-                # Or in shorthand:
-                #   (r(NB) - r(NB).r) = -((NB - NB.r) * NB.v * NB.vg)
-                #                     = -(NB - NB.r) * NB.v * NB.vg
-                # We're ignoring the vertex group so NB.vg = 1, leaving:
-                #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
-                # Rearranging for r(NB) gives:
-                #   r(NB) = r(NB).r - (NB - NB.r) * NB.v
-                # Note that (NB - NB.r) * NB.v = difference_co_flat_value_scaled so:
-                #   r(NB) = r(NB).r - difference_co_flat_value_scaled
-
-                # Subtract difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
-                #
-                # for a key relative to NB, e.g. key.r == NB
-                #   key = NB + (key - NB)
-                # the relative difference must be maintained so
-                #   r(key) = r(NB) + (key - NB)
-                #          = r(NB) + key - NB
-                # From earlier:
-                #   r(NB) = r(NB).r - (NB - NB.r) * NB.v * NB.vg
-                # Note that (NB - NB.r) * NB.v * NB.vg = difference_co_flat_scaled
-                #   r(NB) = r(NB).r - difference_co_flat_scaled
-                # So:
-                #   r(key) = r(NB).r - difference_co_flat_scaled + key - NB
-                # Rearranging:
-                #   r(key) = key - difference_co_flat_scaled + r(NB).r - NB
-                # Note that NB - NB.r = difference_co_flat so:
-                #   NB.r - NB = -difference_co_flat
-                # Therefore:
-                #   r(key) = key - difference_co_flat_scaled - difference_co_flat
-                # Rearranging:
-                #   r(key) = key - (difference_co_flat_scaled + difference_co_flat)
-                # The difference between r(key) and key is a constant value, so that same value can be added to all of the keys relative to NB and not just the key where key.r == NB
-                #   r(key) = key - reverted_difference
-                ###reverted_difference = np.add(difference_co_flat_scaled, difference_co_flat, out=temp_co_array2)
-
                 # If there wasn't a vertex group on new_basis:
                 # Instead of adding the difference_co_flat_scaled to each key it will be subtracted from each key instead
-                for key_block in keys_relative_recursive_to_new_basis:
-                    # DEBUG
-                    # print('Adding shape key revert difference to {}!!!!'.format(key_block.name))
-                    # TODO: What operation do we actually need?
-                    # TODO: This is broken when new_basis_shapekey.value isn't 1 ## It is????
-                    # Subtract difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
+                for key_block in keys_relative_recursive_to_new_basis | {new_basis_shapekey}:
                     key_block.data.foreach_get('co', temp_co_array)
-                    # Faster version of [key_co - difference_co for key_co, difference_co in zip(temp_co_array, difference_co_flat_scaled)]
-                    key_block.data.foreach_set('co', np.subtract(temp_co_array, difference_co_flat_scaled, out=temp_co_array))
+                    key_block.data.foreach_set('co', np.subtract(temp_co_array, difference_co_flat, out=temp_co_array))
 
                 # it will be affected by its own application, so we can simply set it to the old positions of its relative key
                 new_basis_shapekey.data.foreach_set('co', new_basis_relative_co_flat)
@@ -472,105 +410,50 @@ def big_test(count):
             # Typical user setups have all the shape keys immediately relative to Basis, so this won't be used much
 
             for key_block in keys_relative_recursive_to_basis:
-                ###DEBUG
-                # print('Adding shape key difference to {}'.format(key_block.name))
                 # Add difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
                 key_block.data.foreach_get('co', temp_co_array)
                 # Faster version of [key_co + difference_co for key_co, difference_co in zip(temp_co_array, difference_co_flat_scaled)]
                 key_block.data.foreach_set('co', np.add(temp_co_array, difference_co_flat_scaled, out=temp_co_array))
 
-            if new_basis_shapekey_vertex_group:
-                # If we're to leave the vertex group on the reverted key, the movement from applied(new_basis.relative_key) to reverted(new_basis) needs to equal the
-                # negated movement from (new_basis.relative_key to new_basis) multiplied by new_basis.vertex_group
-                #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
-                #                             = -(NB - NB.r) * NB.v * NB.vg
-                # NB.vg cancels on both sides, leaving:
-                #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
-                # Rearranging for r(NB) gives:
-                #   r(NB) = r(NB).r - (NB - NB.r) * NB.v
-                # We already have (NB - NB.r) * NB.v, it's difference_co_flat_value_scaled so:
-                #   r(NB) = r(NB).r - difference_co_flat_value_scaled
-                # Since NB isn't relative to Basis, its relative key is unchanged, so r(NB).r = NB.r and therefore
-                #   r(NB) = NB.r - difference_co_flat_value_scaled
+            # The difference between the reverted key and its relative key needs to equal the negative of the
+            # difference between new_basis and new_basis.relative_key multiplied
+            # new_basis.vertex_group should be present on both
+            #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
+            #                             = -(NB - NB.r) * NB.v * NB.vg
+            # NB.vg cancels on both sides, leaving:
+            #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
+            # r(NB).r is unchanged, so r(NB).r = NB.r
+            #   r(NB) - NB.r = -(NB - NB.r) * NB.v
+            # r(NB) = X + NB where X is what we want to find to add
+            #   X + NB - NB.r = -(NB - NB.r) * NB.v
+            # Rearrange for X
+            #   X = -(NB - NB.r) - (NB - NB.r) * NB.v
+            #
+            # (NB - NB.r) can be factorised
+            #   X = (NB - NB.r)(-1 - NB.v)
+            # Note that (NB - NB.r) is difference_co_flat, giving
+            #   X = difference_co_flat * (-1 - NB.v)
+            #
+            # Alternatively, instead of factorising, note that (NB - NB.r) * NB.v is difference_co_flat_value_scaled
+            #   X = -(NB - NB.r) - difference_co_flat_value_scaled
+            # Note that (NB - NB.r) is difference_co_flat, giving
+            #   X = -difference_co_flat - difference_co_flat_value_scaled
+            # Or
+            #   X = -(difference_co_flat + difference_co_flat_value_scaled)
+            #
+            # Since NB.vg isn't present, it doesn't matter whether new_basis_shapekey has a vertex_group or not
+            #
+            # As with before, we'll use the multiplication option due to it scaling slightly better with a larger
+            # number of vertices
+            # X = difference_co_flat * (-1 - NB.v)
+            np.multiply(difference_co_flat, -1 - new_basis_shapekey.value, out=temp_co_array2)
 
-                # Subtract difference_co_flat_value_scaled
-                reverted_key_flat_co = np.subtract(new_basis_relative_co_flat, difference_co_flat_value_scaled, out=temp_co_array2)
-
-                # Set r(NB)
-                new_basis_shapekey.data.foreach_set('co', reverted_key_flat_co)
-
-                # The keys that are relative to new_basis need to be adjusted for the difference between new_basis and reverted(new_basis) so that their relative movement is still the same
-                #   Key_old - NB = Key_new - r(NB)
-                # rearranging:
-                #   Key_new = Key_old - NB + r(NB)
-                # Therefore,
-                difference_for_keys_relative_to_new_basis = np.subtract(reverted_key_flat_co, new_basis_co_flat, out=temp_co_array2)
-
-                for key_block in keys_relative_recursive_to_new_basis:
-                    key_block.data.foreach_get('co', temp_co_array)
-                    key_block.data.foreach_set('co', np.add(temp_co_array, difference_for_keys_relative_to_new_basis, out=temp_co_array))
-            else:
-                # Subtract difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
-                #
-                # for a key relative to NB, e.g. key.r == NB
-                #   key = NB + (key - NB)
-                # the relative difference must be maintained so
-                #   r(key) = r(NB) + (key - NB)
-                #          = r(NB) + key - NB
-                # From earlier:
-                #   r(NB) = r(NB).r - (NB - NB.r) * NB.v * NB.vg
-                # Note that (NB - NB.r) * NB.v * NB.vg = difference_co_flat_scaled
-                #   r(NB) = r(NB).r - difference_co_flat_scaled
-                # So:
-                #   r(key) = r(NB).r - difference_co_flat_scaled + key - NB
-                # Since NB isn't relative to Basis, its relative key is unchanged, so r(NB).r = NB.r and therefore
-                #   r(key) = NB.r - difference_co_flat_scaled + key - NB
-                # Rearranging:
-                #   r(key) = key - difference_co_flat_scaled + NB.r - NB
-                # Note that NB - NB.r = difference_co_flat so:
-                #   NB.r - NB = -difference_co_flat
-                # Therefore:
-                #   r(key) = key - difference_co_flat_scaled - difference_co_flat
-                # Rearranging:
-                #   r(key) = key - (difference_co_flat_scaled + difference_co_flat)
-                # The difference between r(key) and key is a constant value, so that same value can be added to all of the keys relative to NB and not just the key where key.r == NB
-                #   r(key) = key - reverted_difference
-                reverted_difference = np.add(difference_co_flat_scaled, difference_co_flat, out=temp_co_array2)
-
-                # There is also an alternative which requires less operations when starting from nothing pre-calculated:
-                # Starts the same:
-                #   for a key relative to NB, e.g. key.r == NB
-                #     key = NB + (key - NB)
-                #   the relative difference must be maintained so
-                #     r(key) = r(NB) + (key - NB)
-                #            = r(NB) + key - NB
-                #   From earlier:
-                #     r(NB) = r(NB).r - (NB - NB.r) * NB.v * NB.vg
-                # Differs from here:
-                #   So:
-                #     r(key) = r(NB).r - (NB - NB.r) * NB.v * NB.vg + key - NB
-                #   Since NB isn't relative to Basis, its relative key is unchanged, so r(NB).r = NB.r and therefore
-                #     r(key) = NB.r - (NB - NB.r) * NB.v * NB.vg + key - NB
-                #   Rearranging:
-                #     r(key) = key - (NB - NB.r) * NB.v * NB.vg - NB + NB.r
-                #     r(key) = key - (NB - NB.r) * NB.v * NB.vg - (NB - NB.r)
-                #     r(key) = key - (NB - NB.r) * (NB.v * NB.vg - 1)
-                #   Note that NB - NB.r = difference_co_flat so:
-                #     r(key) = key - (difference_co_flat) * (NB.v * NB.vg - 1)
-                #   Rearranging to minimise function calls since difference_co_flat and NB.vg are arrays:
-                #     r(key) = key - (difference_co_flat) * (NB.vg - 1/NB.v) * NB.v [This is ok, since NB.v can never be zero
-                # While this doesn't require difference_co_flat_scaled to have been calculated, it does require more operations than using the already calculated difference_co_flat_scaled
-                for key_block in keys_relative_recursive_to_new_basis:
-                    # DEBUG
-                    # print('Adding shape key revert difference to {}'.format(key_block.name))
-                    key_block.data.foreach_get('co', temp_co_array)
-                    key_block.data.foreach_set('co', np.subtract(temp_co_array, reverted_difference, out=temp_co_array))
-
-                # The new basis isn't recursively relative to the Basis, it won't be affected by its own application, nor will any shape keys relative to it.
-                new_basis_shapekey.data.foreach_set('co', np.subtract(new_basis_relative_co_flat, difference_co_flat_scaled, out=temp_co_array))
+            for key_block in keys_relative_recursive_to_new_basis | {new_basis_shapekey}:
+                key_block.data.foreach_get('co', temp_co_array)
+                key_block.data.foreach_set('co', np.add(temp_co_array, temp_co_array2, out=temp_co_array))
 
     # To use the blend_from_shape modifier, all the vertices need to be visible and selected in order to affect them all (faces and edges don't matter)
-    # shape_key_edit_mode needs to be disabled because if enabled it could be slow if other shape keys are active and if the active shape key does not have
+    # use_shape_key_edit_mode needs to be disabled because if enabled it could be slow if other shape keys are active and if the active shape key does not have
     # a value of 1.0, it will affect how blend_from_shape gets applied, e.g., if the value is 0.0, the blend_from_shape modifier will do nothing.
     class BlendFromShapeEditModeHelper:
         is_set_up = False
@@ -602,7 +485,7 @@ def big_test(count):
                 data.polygons.foreach_get('select', self.polygon_select_values)
 
                 # Store the current shape key edit mode setting
-                self.shape_key_edit_mode = self.mesh.shape_key_edit_mode
+                self.use_shape_key_edit_mode = self.mesh.use_shape_key_edit_mode
 
         def pre_edit_mode_setup(self):
             if not self.is_set_up:
@@ -610,8 +493,8 @@ def big_test(count):
 
                 data = self.mesh.data
 
-                # Turn off shape_key_edit_mode
-                self.mesh.shape_key_edit_mode = False
+                # Turn off use_shape_key_edit_mode
+                self.mesh.use_shape_key_edit_mode = False
                 # For large meshes, these get slower, but are still faster than revealing and selecting the whole mesh while in edit mode using the corresponding operators,
                 #   particularly the unhiding
                 num_verts = len(data.vertices)
@@ -624,8 +507,8 @@ def big_test(count):
             if self.is_set_up:
                 data = self.mesh.data
 
-                # Restore shape_key_edit_mode
-                self.mesh.shape_key_edit_mode = self.shape_key_edit_mode
+                # Restore use_shape_key_edit_mode
+                self.mesh.use_shape_key_edit_mode = self.use_shape_key_edit_mode
 
                 # Restore hide attributes
                 data.vertices.foreach_set('hide', self.vertex_hide_values)
@@ -652,7 +535,7 @@ def big_test(count):
         #   new_shape_from_mix() -> temp_shape
         #     # true_basis is the first shape key
         #     temp_shape - true_basis = (NB - NB.r) * NB.v * NB.vg
-        temp_shape = mesh.shape_key_add(name='temp_shape', from_mix=True)
+        temp_shape = mesh.shape_key_add(name="temp shape (you shouldn't see this)", from_mix=True)
 
         # Restore whatever got changed in order to isolate the active shape key
         isolate_active_restore_function()
@@ -667,7 +550,10 @@ def big_test(count):
         blend_from_shape_edit_mode_helper = ShapeKeyApplier.BlendFromShapeEditModeHelper(mesh)
 
         #   add(temp_shape, value=1) to shapes in r_relative(target_basis) | {target_basis}
-        ShapeKeyApplier.fast_multi_shape_add_key(temp_shape, keys_relative_recursive_to_basis | {old_basis_shapekey}, mesh, edit_mode_helper=blend_from_shape_edit_mode_helper)
+        ShapeKeyApplier.multi_shape_add_key(shape_key_to_add=temp_shape,
+                                            shapes_to_affect=keys_relative_recursive_to_basis | {old_basis_shapekey},
+                                            mesh=mesh,
+                                            edit_mode_helper=blend_from_shape_edit_mode_helper)
 
         # Remove the temporary key
         mesh.shape_key_remove(temp_shape)
@@ -699,21 +585,20 @@ def big_test(count):
         #     X = new_basis_shapekey * (-1 - NB.v)
         #
         #   add(NB, value=-1 - NB.v) to shapes in r_relative(NB) | {NB}
-        ShapeKeyApplier.fast_multi_shape_add_key(
-            new_basis_shapekey, keys_relative_recursive_to_new_basis | {new_basis_shapekey},
-            mesh, value=-1 - new_basis_shapekey.value, edit_mode_helper=blend_from_shape_edit_mode_helper)
+        ShapeKeyApplier.multi_shape_add_key(shape_key_to_add=new_basis_shapekey,
+                                            shapes_to_affect=keys_relative_recursive_to_new_basis | {new_basis_shapekey},
+                                            mesh=mesh,
+                                            value=-1 - new_basis_shapekey.value,
+                                            edit_mode_helper=blend_from_shape_edit_mode_helper)
 
-        # Restore vert/edge/face hide and select status, and shape_key_edit_mode
+        # Restore vert/edge/face hide and select status, and use_shape_key_edit_mode
         blend_from_shape_edit_mode_helper.restore()
 
         # Restore the active shape key index
         mesh.active_shape_key_index = new_basis_shapekey_index
 
-    # Uses an edit mode operator, so will only affect the selected parts of the mesh
-    # Passing do_edit_mode_setup=True will make all the vertices visible and selected
-    # Returns True if edit mode setup was performed, otherwise False
     @staticmethod
-    def fast_multi_shape_add_key(shape_key_to_add, shapes_to_affect, mesh, *, value=1.0, edit_mode_helper):
+    def multi_shape_add_key(*, shape_key_to_add, shapes_to_affect, mesh, value=1.0, edit_mode_helper):
         to_add_relative_key = shape_key_to_add.relative_key
 
         if shapes_to_affect and value != 0.0 and to_add_relative_key != shape_key_to_add:
@@ -721,16 +606,25 @@ def big_test(count):
             # Make sure it's a set
             shapes_to_affect = set(shapes_to_affect)
 
-            to_add_relative_key = shape_key_to_add.relative_key
-
+            # Out of all the shapes_to_affect, we need to pick one of them that all the shapes_to_affect will temporarily
+            # have their relative keys set to. This will also be the shape key that gets used as the active shape key when
+            # entering edit mode.
+            # It's important that shape_key_to_add's relative key remains the same since the difference between those
+            # two keys are what will be added in edit mode
             if shape_key_to_add in shapes_to_affect:
                 if to_add_relative_key in shapes_to_affect:
                     # Both shape_key_to_add and to_add_relative_key are to be affected,
                     # make sure to_add_relative_key is picked as the temporary basis,
-                    # that way the difference between shape_key_to_add and to_add_relative_key remains unchanged
+                    # that way shape_key_to_add's relative_key remains as to_add_relative_key
                     temporary_affected_basis = to_add_relative_key
                 else:
-                    # shape_key_to_add is to be affected, but to_add_relative_key isn't, make sure shape_key_to_add is picked as the temporary basis
+                    # shape_key_to_add is to be affected, but to_add_relative_key isn't, make sure shape_key_to_add is picked
+                    # as the temporary basis. We will restore shape_key_to_add's relative_key afterwards.
+                    # Other keys cannot be picked as blend_from_shape will only affect the active shape key and all
+                    # shape keys immediately relative to that active shape key.
+                    # If we were to pick other_key as the temporary_affected_basis, the only way shape_key_to_add could
+                    # get affected is if shape_key_to_add.relative_key == other_key, but then shape_key_to_add's relative
+                    # key is no longer to_add_relative_key, so the blend_from_shape will blend the wrong amount
                     temporary_affected_basis = shape_key_to_add
             elif to_add_relative_key in shapes_to_affect:
                 # If to_add_relative_key is in the set and shape_key_to_add is not:
@@ -849,11 +743,6 @@ def unregister(menu=True):
     bpy.utils.unregister_class(ShapeKeyApplier)
 
 
-#
-#
-#
-#
-#
 # Test from text editor
 if __name__ == "__main__":
     register(menu=False)
