@@ -40,7 +40,6 @@ class ShapeKeyApplier(bpy.types.Operator):
     bl_label = "Apply Selected Shape Key To Basis"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    # TODO: Figure out how properties can be defined with Cats such that 2.7x and 2.8x+ can be supported
     use_multi_add: bpy.props.BoolProperty(name="Use multi-shape add")
 
     @classmethod
@@ -50,8 +49,7 @@ class ShapeKeyApplier(bpy.types.Operator):
         # TODO: Should we also check context.object.data.shape_keys.use_relative == True?
         return (context.mode == 'OBJECT' and
                 context.object and
-                # Could be extended to other types that have shape keys, the only part which references something mesh specific is data.vertices, which would need
-                # to be changed to data.points in the case of a lattice object. Curves and nurbs don't support vertex groups so wouldn't ever hit that code.
+                # Could be extended to other types that have shape keys
                 context.object.type == 'MESH' and
                 # If the active shape key is the basis, nothing should be done
                 context.object.active_shape_key_index > 0 and
@@ -59,11 +57,12 @@ class ShapeKeyApplier(bpy.types.Operator):
                 context.object.active_shape_key.relative_key != context.object.active_shape_key)
 
     def execute(self, context):
-        # I will assume most meshes are going to have more than 600 vertices (and for small meshes, both options are very fast)
-        # From the benchmark data, it is generally a good idea to pick individual_add when there are less than 8 shape keys to be affected
-        # I think this number can be calculated from len(keys_relative_recursive_to_old_basis | keys_relative_recursive_to_new_basis)
+        # Most meshes this will be used on are assumed to have more than 600 vertices (and for small meshes, both options are very fast anyway)
+        # From benchmark data, it is generally a good idea to pick individual_add when there are less than 8 shape keys to be affected
+        # I think this number can be calculated from len(keys_relative_recursive_to_old_basis | keys_relative_recursive_to_new_basis | {new_basis_shapekey})
         # TODO: See if the speed changes when there are also a bunch of shape keys that remain unaffected (e.g. not relative to either old_basis
         #       or new_basis
+        # TODO: Add the automatic setting of use_multi_add to False when there are less than 8 shape keys to be affected, otherwise True
         ################
         ################
         ################
@@ -73,13 +72,8 @@ class ShapeKeyApplier(bpy.types.Operator):
         ################
         ################
 
-        # debug_timings = {}
-        # debug_timings['start'] = time.perf_counter()
-        # TODO: Try and figure out why the Cats operator is using this instead of context.object
-        #       typically context.object should be used so that context overrides can be used with the operator (e.g. you want to use the operator on
-        #       an object that isn't the active object. Also, the poll(...) method uses context.object anyway, there could be problems if Common.get_active()
-        #       gets a different object that hasn't been checked against poll(...)
-        # mesh = Common.get_active()
+        # There's no reason to use Common.get_active(), if an object other than the active object is to be used, it can be
+        # specified using a context override
         mesh = context.object
 
         # Get shapekey which will be the new basis
@@ -308,7 +302,6 @@ class ShapeKeyApplier(bpy.types.Operator):
             if new_basis_mixed.relative_key != new_basis_shapekey.relative_key:
                 new_basis_mixed.relative_key.data.foreach_get('co', temp_shape_relative_co_flat)
 
-            # TODO: Reuse an existing array instead of creating a new one?
             difference_co_flat_scaled = np.subtract(temp_shape_co_flat, temp_shape_relative_co_flat)
 
             # Remove new_basis_mixed
@@ -327,29 +320,35 @@ class ShapeKeyApplier(bpy.types.Operator):
             # All keys in keys_recursive_relative_to_new_basis must also be in keys_recursive_relative_to_basis
             keys_not_relative_recursive_to_new_basis_and_not_new_basis = (keys_relative_recursive_to_basis - keys_relative_recursive_to_new_basis) - {new_basis_shapekey}
 
-            # TODO: This for loop is where most of the execution will happen for 'normal' setups of lots of shape keys relative to the first shape
-            #  Maybe multiprocessing could speed this up, if the overhead isn't too much, maybe to even faster than the multi_add function?
-            #  see https://docs.python.org/3/library/multiprocessing.html and https://docs.python.org/3/library/multiprocessing.html#multiprocessing.pool.Pool
-            # from multiprocessing import Pool
-            #
-            # def multiprocess_add_difference_co_flat_scaled(key_block):
-            #     # The issue with using multiprocess is that we can't share the same array for speed any more
-            #     co = np.empty(flattened_co_length, dtype=float)
-            #     key_block.data.foreach_get('co', co)
-            #     key_block.data.foreach_set('co', np.add(co, difference_co_flat_scaled, out=co))
-            # None gets count based on
-            # with Pool(None) as p:
-            #     # automatically picks size of chunks to break keys_not_relative_recursive_to_new_basis into
-            #     p.map(multiprocess_add_difference_co_flat_scaled, keys_not_relative_recursive_to_new_basis)
+            # This for loop is where most of the execution will happen for 'normal' setups of lots of shape keys relative to the first shape
+            # I looked into using multiprocessing to parallelise this, but type(key_block) and type(key_block.data) can't be pickled,
+            # i.e. you can't parallelise a list of either of them
+            # Add difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
             for key_block in keys_not_relative_recursive_to_new_basis_and_not_new_basis:
-                if key_block == new_basis_shapekey:
-                    print("no")
-                # DEBUG
-                # print('Adding shape key difference to {}'.format(key_block.name))
-                # Add difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
                 key_block.data.foreach_get('co', temp_co_array)
                 # Faster version of [key_co + difference_co for key_co, difference_co in zip(temp_co_array, difference_co_flat_scaled)]
                 key_block.data.foreach_set('co', np.add(temp_co_array, difference_co_flat_scaled, out=temp_co_array))
+            # # Alternative method that loops through the keys twice plus flat_co_arrays twice, but performs only a single add operation with numpy
+            # # Additionally, it requires more memory as it loads an array of (num_keys * num_verts * 3) floats into memory
+            # # instead of using only the two shared arrays temp_co_array and temp_co_array2
+            # # Seems to be identical speed-wise or there is otherwise no noticeable speed difference
+            # flat_co_arrays = np.empty((len(keys_not_relative_recursive_to_new_basis_and_not_new_basis), flattened_co_length), dtype=float)
+            #
+            # # Maybe could do:
+            # #   any(key_block.data.foreach_get('co', co_array) for co_array, key_block in zip(flat_co_arrays, keys_not_relative_recursive_to_new_basis_and_not_new_basis)
+            # # any(iterable) iterates until a value is True, foreach_get has no return value/returns None which doesn't evaluate to True
+            # for co_array, key_block in zip(flat_co_arrays, keys_not_relative_recursive_to_new_basis_and_not_new_basis):
+            #     # read co into the corresponding co_array
+            #     key_block.data.foreach_get('co', co_array)
+            #
+            # # Adds difference_co_flat_scaled to each flat_co_array in flat_co_arrays
+            # np.add(flat_co_arrays, difference_co_flat_scaled, out=flat_co_arrays)
+            #
+            # # Set the co again now that it's been added
+            # # Maybe could do:
+            # #   any(key_block.data.foreach_set('co', co_array) for co_array, key_block in zip(flat_co_arrays, keys_not_relative_recursive_to_new_basis_and_not_new_basis)
+            # for co_array, key_block in zip(flat_co_arrays, keys_not_relative_recursive_to_new_basis_and_not_new_basis):
+            #     key_block.data.foreach_set('co', co_array)
 
             # We need the difference between r(NB) and r(NB).r to be the negative of
             #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
@@ -398,10 +397,12 @@ class ShapeKeyApplier(bpy.types.Operator):
             else:
                 # If there wasn't a vertex group on new_basis:
                 # Instead of adding the difference_co_flat_scaled to each key it will be subtracted from each key instead
-                for key_block in keys_relative_recursive_to_new_basis | {new_basis_shapekey}:
+                #for key_block in keys_relative_recursive_to_new_basis | {new_basis_shapekey}:
+                for key_block in keys_relative_recursive_to_new_basis:
                     key_block.data.foreach_get('co', temp_co_array)
                     key_block.data.foreach_set('co', np.subtract(temp_co_array, difference_co_flat, out=temp_co_array))
 
+                # NB - NB.r = difference_co_flat
                 # it will be affected by its own application, so we can simply set it to the old positions of its relative key
                 new_basis_shapekey.data.foreach_set('co', new_basis_relative_co_flat)
         else:
