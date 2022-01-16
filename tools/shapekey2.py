@@ -11,8 +11,7 @@ from .register import register_wrap
 #
 # Extra benefits of this implementation:
 #   1.   Maintains relative structure of all shape keys
-#   1.2. Shape keys that aren't relative to the basis or new basis remain untouched
-#   3.   Only one temporary shape key is created and then deleted
+#   1.2. Shape keys that aren't relative (recursively) to the basis or new basis remain untouched
 #   3.   Shape key order remains unchanged
 #   Reverting shape keys can be done in any order
 #   The vertex group of the new basis shape key is kept even after the new basis shape key becomes the reverted shape key of itself
@@ -20,10 +19,20 @@ from .register import register_wrap
 #   This should be fairly simple to extend to curves, nurbs and lattices. I'm not sure if there are any other object types with shape keys
 #   This should be easy to extend to applying the active shape key to any other 'basis-like' shape key (a shape key relative to itself),
 #     simply assign old_basis_shapekey to any other 'basis-like' shape key
-# Performance differences:
-#   Faster for smaller number of shape keys on meshes with more vertices (individual_add)
-#   Faster for smaller meshes with more shape keys (multi_add)
-#   Slower for more shape keys on meshes with fewer vertices
+# Performance notes:
+#   With more than about 10 shape keys and up to 150,000 vertices, it should always be faster than Cats
+#       Extrapolating from benchmark data, multiplying that 150,000 vertices by about 4, increases the minimum shape
+#       keys to be faster than Cats by about 3
+#       e.g. 600,000 vertices would only be faster than Cats when there are about 13 shape keys
+#       e.g. 2,400,000 vertices would only be faster than Cats when there are about 16 shape keys
+#   With 5 or less shape keys, it should always be faster than Cats
+#   With 10242 vertices or fewer, it should always be faster than or equal to Cats
+# Noticeable (>100ms speed difference) performance differences:
+#   At 10242 vertices, noticeably faster for 40 or more shape keys
+#   At 40962 vertices, noticeably faster for 21 or more shape keys
+#   At 163842 vertices, noticeably faster for 19 or more shape keys
+#   At 163842 vertices, noticeably faster for 4 or fewer shape keys
+#   At 163842 vertices, noticeably slower for 10 shape keys
 bl_info = {
     "name": "Fast Apply Selected Shape Key To Relative Key",
     "blender": (2, 80, 0),
@@ -40,8 +49,6 @@ class ShapeKeyApplier(bpy.types.Operator):
     bl_label = "Apply Selected Shape Key To Basis"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    use_multi_add: bpy.props.BoolProperty(name="Use multi-shape add")
-
     @classmethod
     def poll(cls, context):
         # Note that context.object.active_shape_key_index is 0 if there are no shape keys
@@ -57,23 +64,7 @@ class ShapeKeyApplier(bpy.types.Operator):
                 context.object.active_shape_key.relative_key != context.object.active_shape_key)
 
     def execute(self, context):
-        # Most meshes this will be used on are assumed to have more than 600 vertices (and for small meshes, both options are very fast anyway)
-        # From benchmark data, it is generally a good idea to pick individual_add when there are less than 8 shape keys to be affected
-        # I think this number can be calculated from len(keys_relative_recursive_to_old_basis | keys_relative_recursive_to_new_basis | {new_basis_shapekey})
-        # TODO: See if the speed changes when there are also a bunch of shape keys that remain unaffected (e.g. not relative to either old_basis
-        #       or new_basis
-        # TODO: Add the automatic setting of use_multi_add to False when there are less than 8 shape keys to be affected, otherwise True
-        ################
-        ################
-        ################
-        use_multi_add = self.use_multi_add
-        # use_multi_add = True
-        ################
-        ################
-        ################
-
-        # There's no reason to use Common.get_active(), if an object other than the active object is to be used, it can be
-        # specified using a context override
+        # If an object other than the active object is to be used, it can be specified using a context override
         mesh = context.object
 
         # Get shapekey which will be the new basis
@@ -112,6 +103,12 @@ class ShapeKeyApplier(bpy.types.Operator):
         # 0.0 would have no effect, so set to 1.0
         if new_basis_shapekey.value == 0.0:
             new_basis_shapekey.value = 1.0
+
+        # TODO: See if the speed changes when there are also a bunch of shape keys that remain unaffected (e.g. not relative to either old_basis
+        #       or new_basis
+        # Most meshes this will be used on are assumed to have more than 600 vertices (and for small meshes, both options are very fast anyway)
+        # From benchmark data, it is generally a good idea to pick individual_add when there are 10 or fewer shape keys to be affected
+        use_multi_add = len(keys_relative_recursive_to_old_basis | keys_relative_recursive_to_new_basis | {new_basis_shapekey}) > 10
 
         if use_multi_add:
             # Optimised for a large number of affected shape keys by using the blend_from_shape operator twice, regardless of how many shape keys there are
