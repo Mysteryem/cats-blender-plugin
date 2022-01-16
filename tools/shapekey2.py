@@ -1,7 +1,6 @@
 import bpy
 import numpy as np
 from .register import register_wrap
-import time
 
 # Issues with CATS' implementation
 #   1. Doesn't account for keys that have a different relative key to the first shape key, causing Basis to be set as the relative key of all shape keys
@@ -118,9 +117,16 @@ class ShapeKeyApplier(bpy.types.Operator):
             # Optimised for a large number of affected shape keys by using the blend_from_shape operator twice, regardless of how many shape keys there are
             # As blend_from_shape is an edit mode operator, it requires some extra work to set the mesh up so that all the vertices are selected
             # and visible and some extra work to restore the vertex/edge/face selection/visibility afterwards.
-            ShapeKeyApplier.multi_add(mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, old_basis_shapekey, keys_relative_recursive_to_old_basis)
+            ShapeKeyApplier.multi_add(mesh=mesh,
+                                      new_basis_shapekey=new_basis_shapekey,
+                                      keys_relative_recursive_to_new_basis=keys_relative_recursive_to_new_basis,
+                                      old_basis_shapekey=old_basis_shapekey,
+                                      keys_relative_recursive_to_basis=keys_relative_recursive_to_old_basis)
         else:
-            ShapeKeyApplier.individual_add(mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, keys_relative_recursive_to_old_basis)
+            ShapeKeyApplier.individual_add(mesh=mesh,
+                                           new_basis_shapekey=new_basis_shapekey,
+                                           keys_relative_recursive_to_new_basis=keys_relative_recursive_to_new_basis,
+                                           keys_relative_recursive_to_basis=keys_relative_recursive_to_old_basis)
 
         # The active key is now a key that reverts to the old relative key so rename it as such
         reverted_string = ' - Reverted'
@@ -235,7 +241,7 @@ class ShapeKeyApplier(bpy.types.Operator):
     # By far the slowest part of this function when the number of vertices increase are the shape_key.data.foreach_set()
     # and shape_key.data.foreach_get() calls, so the number of calls of those should be minimised for performance
     @staticmethod
-    def individual_add(mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, keys_relative_recursive_to_basis):
+    def individual_add(*, mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, keys_relative_recursive_to_basis):
         data = mesh.data
         num_verts = len(data.vertices)
 
@@ -301,7 +307,7 @@ class ShapeKeyApplier(bpy.types.Operator):
             # Need to isolate the active shape key, so that when a new shape is created from mix, it's only the active shape key
             restore_function = ShapeKeyApplier.isolate_active_shape(mesh)
             # This new shape key has the effect of new_basis.value and new_basis.vertex_group applied
-            new_basis_mixed = mesh.shape_key_add(from_mix=True)
+            new_basis_mixed = mesh.shape_key_add(name="temp shape (you shouldn't see this)", from_mix=True)
             # Restore whatever got changed in order to isolate the active shape key
             restore_function()
 
@@ -335,7 +341,7 @@ class ShapeKeyApplier(bpy.types.Operator):
             #
             # Add difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
             # We already have the co array for new_basis_shapekey.relative_key, so do it separately to save a foreach_get call
-            new_basis_shapekey.relative_key.foreach_set('co', np.add(new_basis_relative_co_flat, difference_co_flat_scaled, out=temp_co_array))
+            new_basis_shapekey.relative_key.data.foreach_set('co', np.add(new_basis_relative_co_flat, difference_co_flat_scaled, out=temp_co_array))
             # And now the rest of the shape keys
             for key_block in keys_not_relative_recursive_to_new_basis_and_not_new_basis - {new_basis_shapekey.relative_key}:
                 key_block.data.foreach_get('co', temp_co_array)
@@ -383,7 +389,7 @@ class ShapeKeyApplier(bpy.types.Operator):
 
                 # We already have the co array for new_basis_shapekey, so we can do it separately from the others to
                 # save a foreach_get call
-                new_basis_shapekey.foreach_set('co', np.add(new_basis_co_flat, temp_co_array2, out=temp_co_array))
+                new_basis_shapekey.data.foreach_set('co', np.add(new_basis_co_flat, temp_co_array2, out=temp_co_array))
 
                 # Now add to the rest of the keys
                 for key_block in keys_relative_recursive_to_new_basis:
@@ -453,7 +459,7 @@ class ShapeKeyApplier(bpy.types.Operator):
 
             # We already have the co array for new_basis_shapekey, so we can do it separately from the others to
             # save a foreach_get call
-            new_basis_shapekey.foreach_set('co', np.add(new_basis_co_flat, temp_co_array2, out=temp_co_array))
+            new_basis_shapekey.data.foreach_set('co', np.add(new_basis_co_flat, temp_co_array2, out=temp_co_array))
             # And now the rest of the shape keys
             for key_block in keys_relative_recursive_to_new_basis:
                 key_block.data.foreach_get('co', temp_co_array)
@@ -530,7 +536,7 @@ class ShapeKeyApplier(bpy.types.Operator):
                 self.is_set_up = False
 
     @staticmethod
-    def multi_add(mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, old_basis_shapekey, keys_relative_recursive_to_basis):
+    def multi_add(*, mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, old_basis_shapekey, keys_relative_recursive_to_basis):
         # Need to isolate the active shape key, so that when a new shape is created from mix, it's only the active shape key
         isolate_active_restore_function = ShapeKeyApplier.isolate_active_shape(mesh)
 
@@ -661,7 +667,7 @@ class ShapeKeyApplier(bpy.types.Operator):
                     # Fill the array with the flattened 'co' vectors of shape_key_to_add
                     shape_key_to_add.data.foreach_get('co', shape_key_to_add_co)
                     # Set to_add_relative_key's 'co' vectors from the array
-                    to_add_relative_key.foreach_set('co', shape_key_to_add_co)
+                    to_add_relative_key.data.foreach_set('co', shape_key_to_add_co)
                     # There's nothing more to do, so return
                     return
             else:
