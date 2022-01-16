@@ -242,7 +242,11 @@ class ShapeKeyApplier(bpy.types.Operator):
         data = mesh.data
         num_verts = len(data.vertices)
 
-        new_basis_shapekey_vertex_group = new_basis_shapekey.vertex_group
+        new_basis_shapekey_vertex_group_name = new_basis_shapekey.vertex_group
+        if new_basis_shapekey_vertex_group_name:
+            new_basis_shapekey_vertex_group = mesh.vertex_groups.get(new_basis_shapekey_vertex_group_name)
+        else:
+            new_basis_shapekey_vertex_group = None
 
         new_basis_affected_by_own_application = new_basis_shapekey in keys_relative_recursive_to_basis
 
