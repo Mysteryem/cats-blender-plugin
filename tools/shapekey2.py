@@ -53,13 +53,15 @@ class ShapeKeyApplier(bpy.types.Operator):
     def poll(cls, context):
         # Note that context.object.active_shape_key_index is 0 if there are no shape keys
         # So context.object.active_shape_key_index > 0 simultaneously checks that there are shape keys and that the active shape key isn't the first one
-        # TODO: Should we also check context.object.data.shape_keys.use_relative == True?
         return (context.mode == 'OBJECT' and
                 context.object and
                 # Could be extended to other types that have shape keys
                 context.object.type == 'MESH' and
                 # If the active shape key is the basis, nothing should be done
                 context.object.active_shape_key_index > 0 and
+                # If the shapes aren't relative, using relative keys to apply to the basis and all affected keys would
+                # be wrong and the whole idea of having a key to revert the change doesn't make sense
+                context.object.data.shape_keys.use_relative and
                 # If the active shape key is relative to itself, nothing would be changed
                 context.object.active_shape_key.relative_key != context.object.active_shape_key)
 
@@ -469,6 +471,8 @@ class ShapeKeyApplier(bpy.types.Operator):
     # To use the blend_from_shape modifier, all the vertices need to be visible and selected in order to affect them all (faces and edges don't matter)
     # use_shape_key_edit_mode needs to be disabled because if enabled it could be slow if other shape keys are active and if the active shape key does not have
     # a value of 1.0, it will affect how blend_from_shape gets applied, e.g., if the value is 0.0, the blend_from_shape modifier will do nothing.
+    # For large meshes, a considerable amount of time is spent getting the 'hide' and 'select' values as well as restoring them again later
+    # Choosing not to maintain hide/select state will result in a performance increase
     class BlendFromShapeEditModeHelper:
         is_set_up = False
 
