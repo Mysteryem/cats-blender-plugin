@@ -56,8 +56,8 @@ class ShapeKeyApplier(bpy.types.Operator):
         # TODO: Should we also check context.object.data.shape_keys.use_relative == True?
         return (context.mode == 'OBJECT' and
                 context.object and
-                # Could be extended to other types that have shape keys
-                context.object.type == 'MESH' and
+                # Note that curve and surface shape keys are bugged when they are relative to a key that isn't relative to itself: https://developer.blender.org/T78701
+                context.object.type in {'MESH', 'LATTICE', 'CURVE', 'SURFACE'} and
                 # If the active shape key is the basis, nothing should be done
                 context.object.active_shape_key_index > 0 and
                 # If the active shape key is relative to itself, nothing would be changed
@@ -65,14 +65,14 @@ class ShapeKeyApplier(bpy.types.Operator):
 
     def execute(self, context):
         # If an object other than the active object is to be used, it can be specified using a context override
-        mesh = context.object
+        meshlike = context.object
 
         # Get shapekey which will be the new basis
-        new_basis_shapekey = mesh.active_shape_key
+        new_basis_shapekey = meshlike.active_shape_key
 
         # Create a map of key : [keys relative to key]
         # Effectively the reverse of the key.relative_key relation
-        reverse_relative_map2 = ShapeKeyApplier.ReverseRelativeMap(mesh)
+        reverse_relative_map2 = ShapeKeyApplier.ReverseRelativeMap(meshlike)
 
         # new_basis_shapekey will only be included if it's relative to itself (new_basis_shapekey cannot be the first shape key as poll() ensures
         # that the index of the active shape key is greater than 0)
@@ -94,8 +94,8 @@ class ShapeKeyApplier(bpy.types.Operator):
             return {'CANCELLED'}
 
         # It should work to pick a different key as a basis, so long as that key is immediately relative to itself (key.relative_key == key)
-        # On the off chance that old_basis_shapekey is not relative to itself, reverse_relative_map(mesh) has special handling that treats it as if it always is
-        old_basis_shapekey = mesh.data.shape_keys.key_blocks[0]
+        # On the off chance that the first shape key is not relative to itself, reverse_relative_map(mesh) has special handling that treats it as if it always is
+        old_basis_shapekey = meshlike.data.shape_keys.key_blocks[0]
 
         # old_basis_shapekey will only be included if it's relative to itself or if it's the first shape key
         keys_relative_recursive_to_old_basis = reverse_relative_map2.get_relative_recursive_keys(old_basis_shapekey)
@@ -106,23 +106,22 @@ class ShapeKeyApplier(bpy.types.Operator):
 
         # TODO: See if the speed changes when there are also a bunch of shape keys that remain unaffected (e.g. not relative to either old_basis
         #       or new_basis
+        # Only meshes can use multi_add because it uses the blend_from_shape mesh operator
         # Most meshes this will be used on are assumed to have more than 600 vertices (and for small meshes, both options are very fast anyway)
         # From benchmark data, it is generally a good idea to pick individual_add when there are 10 or fewer shape keys to be affected
-        use_multi_add = len(keys_relative_recursive_to_old_basis | keys_relative_recursive_to_new_basis | {new_basis_shapekey}) > 10
+        use_multi_add = meshlike.type == 'MESH' and len(keys_relative_recursive_to_old_basis | keys_relative_recursive_to_new_basis | {new_basis_shapekey}) > 10
 
         if use_multi_add:
             # Optimised for a large number of affected shape keys by using the blend_from_shape operator twice, regardless of how many shape keys there are
-            # As blend_from_shape is an edit mode operator, it requires some extra work to set the mesh up so that all the vertices are selected
+            # As blend_from_shape is an edit mode operator, it requires some extra work to set the meshlike up so that all the vertices are selected
             # and visible and some extra work to restore the vertex/edge/face selection/visibility afterwards.
-            ShapeKeyApplier.multi_add(mesh=mesh,
+            ShapeKeyApplier.multi_add(mesh=meshlike,
                                       new_basis_shapekey=new_basis_shapekey,
                                       keys_relative_recursive_to_new_basis=keys_relative_recursive_to_new_basis,
                                       old_basis_shapekey=old_basis_shapekey,
                                       keys_relative_recursive_to_basis=keys_relative_recursive_to_old_basis)
         else:
-            ShapeKeyApplier.individual_add(mesh=mesh,
-                                           new_basis_shapekey=new_basis_shapekey,
-                                           keys_relative_recursive_to_new_basis=keys_relative_recursive_to_new_basis,
+            ShapeKeyApplier.individual_add(meshlike=meshlike, new_basis_shapekey=new_basis_shapekey, keys_relative_recursive_to_new_basis=keys_relative_recursive_to_new_basis,
                                            keys_relative_recursive_to_basis=keys_relative_recursive_to_old_basis)
 
         # The active key is now a key that reverts to the old relative key so rename it as such
@@ -137,7 +136,7 @@ class ShapeKeyApplier(bpy.types.Operator):
             # Add the reverted_string to the end of the name, so it's clear that this shape key now reverts
             new_basis_shapekey.name = new_basis_shapekey.name + reverted_string
 
-        # Setting the value to zero will make the mesh appear unchanged in overall shape and help to show that the operator has worked correctly
+        # Setting the value to zero will make the meshlike appear unchanged in overall shape and help to show that the operator has worked correctly
         new_basis_shapekey.value = 0.0
         new_basis_shapekey.slider_min = 0.0
         # Regardless of what the max was before, 1.0 will now fully undo the applied shape key
@@ -238,233 +237,287 @@ class ShapeKeyApplier(bpy.types.Operator):
     # By far the slowest part of this function when the number of vertices increase are the shape_key.data.foreach_set()
     # and shape_key.data.foreach_get() calls, so the number of calls of those should be minimised for performance
     @staticmethod
-    def individual_add(*, mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, keys_relative_recursive_to_basis):
-        data = mesh.data
-        num_verts = len(data.vertices)
+    def individual_add(*, meshlike, new_basis_shapekey, keys_relative_recursive_to_new_basis, keys_relative_recursive_to_basis):
+        # For a mesh this is the same as len(meshlike.data.vertices), for a lattice it would be len(meshlike.data.points)
+        # for a curve or surface, the equivalent is more complicated since they have a list of splines and each spline
+        # can have a list of points or a list of bezier_points
+        key_length = len(new_basis_shapekey.data)
+
+        if key_length == 0:
+            return
 
         new_basis_shapekey_vertex_group_name = new_basis_shapekey.vertex_group
         if new_basis_shapekey_vertex_group_name:
-            new_basis_shapekey_vertex_group = mesh.vertex_groups.get(new_basis_shapekey_vertex_group_name)
+            new_basis_shapekey_vertex_group = meshlike.vertex_groups.get(new_basis_shapekey_vertex_group_name)
         else:
             new_basis_shapekey_vertex_group = None
 
         new_basis_affected_by_own_application = new_basis_shapekey in keys_relative_recursive_to_basis
 
-        # Array of Vector type is flattened by foreach_get into a sequence so the length needs to be multiplied by 3
-        flattened_co_length = num_verts * 3
-
-        # Store shape key vertex positions for new_basis
-        # There's no need to initialise the elements to anything since they will all be overwritten
-        new_basis_co_flat = np.empty(flattened_co_length, dtype=float)
-        new_basis_relative_co_flat = np.empty(flattened_co_length, dtype=float)
-
-        new_basis_shapekey.data.foreach_get('co', new_basis_co_flat)
-        new_basis_shapekey.relative_key.data.foreach_get('co', new_basis_relative_co_flat)
-
-        # This is movement of the active shape key at a value of 1.0
-        difference_co_flat = np.subtract(new_basis_co_flat, new_basis_relative_co_flat)
-
-        # Scale the difference based on the value of the active key
-        difference_co_flat_value_scaled = np.multiply(difference_co_flat, new_basis_shapekey.value)
-
-        # We can reuse these arrays over and over instead of creating new ones each time
-        temp_co_array = np.empty(flattened_co_length, dtype=float)
-        temp_co_array2 = np.empty(flattened_co_length, dtype=float)
-
-        # Scale the difference based on the vertex group of the active key
-        #   Ideally, we would scale difference_co_flat by the weight of each vertex in new_basis_shapekey.vertex_group.
-        #   Unfortunately, Blender has no efficient way to get all the weights for a particular vertex group, so it's
-        #   pretty much always a few times faster to create a new shape from mix and get its 'co' with foreach_get(...)
-        #   Tiny meshes, think <1000 vertices, are the exception.
-        #
-        #   For reference, the ways to get all vertex weights that you can find on stackoverflow:
-        #       Weights from vertices:
-        #           This scales really poorly when lots of vertices are in multiple vertex groups, especially when the vertices are not in the vertex group we want to check,
-        #           because for every vertex v, v.groups has to be iterated until either the vertex group is found or iteration finishes without finding the vertex group
-        #               vertex_weights = [next((g.weight for g in v.groups if g.group == vertex_group_index), 0) for v in data.vertices]
-        #           Equivalent to:
-        #               vertex_weights = []
-        #               for v in data.vertices:
-        #                   weight = 0
-        #                   for g in v.groups:
-        #                       if g.group == vertex_group_index:
-        #                           weight = g.weight
-        #                           break
-        #                   vertex_weights.append(weight)
-        #
-        #       Weights from vertex group:
-        #           This doesn't scale poorly with lots of vertex groups like the other way does, but, if most of the vertices aren't in the vertex group, relying on catching
-        #           the exception is really slow. If Blender had a similar method that returned a default value or even just None instead of throwing an exception, this would
-        #           be much faster, though maybe still a little slower than creating a new key from mix.
-        #           Ideally we'd want a fast access method like foreach_get(...) instead of having to iterate through all the vertices individually
-        #               vertex_weights = []
-        #               for i in range(num_verts):
-        #                   try:
-        #                       weight = vertex_group.weight(i)
-        #                   except:
-        #                       weight = 0
-        #                   vertex_weights.append(weight)
+        new_basis_mixed_vg = None
+        vertex_weights = None
         if new_basis_shapekey_vertex_group:
-            # Need to isolate the active shape key, so that when a new shape is created from mix, it's only the active shape key
-            restore_function = ShapeKeyApplier.isolate_active_shape(mesh)
-            # This new shape key has the effect of new_basis.value and new_basis.vertex_group applied
-            new_basis_mixed = mesh.shape_key_add(name="temp shape (you shouldn't see this)", from_mix=True)
-            # Restore whatever got changed in order to isolate the active shape key
-            restore_function()
+            if key_length > 1000:
+                # Need to isolate the active shape key, so that when a new shape is created from mix, it's only the active shape key
+                restore_function = ShapeKeyApplier.isolate_active_shape(meshlike)
+                # This new shape key has the effect of new_basis.value and new_basis.vertex_group applied
+                new_basis_mixed_vg = meshlike.shape_key_add(name="temp shape (you shouldn't see this)", from_mix=True)
+                # Restore whatever got changed in order to isolate the active shape key
+                restore_function()
+            elif meshlike.type == 'MESH':
+                vertex_group_index = new_basis_shapekey_vertex_group.index
+                vertex_weights = [next((g.weight for g in v.groups if g.group == vertex_group_index), 0) for v in meshlike.data.vertices]
+            elif meshlike.type == 'LATTICE':
+                vertex_group_index = new_basis_shapekey_vertex_group.index
+                vertex_weights = [next((g.weight for g in v.groups if g.group == vertex_group_index), 0) for v in meshlike.data.points]
 
-            # Use the temp arrays, new names for convenience
-            temp_shape_co_flat = temp_co_array
-            temp_shape_relative_co_flat = temp_co_array2
+        # TODO: Find some way to get Blender's FLT_MAX, as that's what's used to set the hard min/max for most float
+        #       properties. Output some info/a warning if the hard_min and/ore hard_max aren't the defaults
+        # All of them always have a 'co' attribute, so this could be used
+        # co_for_min_and_max = type(new_basis_shapekey.data[0]).bl_rna.properties['co']
+        # expected_max = co_for_min_and_max.hard_max
+        # expected_min = co_for_min_and_max.hard_min
 
-            new_basis_mixed.data.foreach_get('co', temp_shape_co_flat)
-            # Often, the relative keys are the same, e.g. they're both the 'basis', but if they're not we'll need to get its data
-            if new_basis_mixed.relative_key != new_basis_shapekey.relative_key:
-                new_basis_mixed.relative_key.data.foreach_get('co', temp_shape_relative_co_flat)
+        # Only 'basic type' properties (bool, int and float) can be used with foreach_get/foreach_set
+        attribute_type_lookup = {'BOOLEAN': bool, 'INT': int, 'FLOAT': float}
+        for attribute_name, shape_property in type(new_basis_shapekey.data[0]).bl_rna.properties.items():
+            if shape_property.is_readonly:
+                # Can't modify readonly properties
+                continue
 
-            difference_co_flat_scaled = np.subtract(temp_shape_co_flat, temp_shape_relative_co_flat)
+            attribute_type = attribute_type_lookup.get(shape_property.type)
+            if not attribute_type:
+                # type must be bool, int or float
+                continue
 
-            # Remove new_basis_mixed
-            active_index = mesh.active_shape_key_index
-            mesh.shape_key_remove(new_basis_mixed)
-            mesh.active_shape_key_index = active_index
-        else:
-            difference_co_flat_scaled = difference_co_flat_value_scaled
+            # Array properties are flattened
+            # e.g. [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)] becomes [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+            if shape_property.is_array:
+                attribute_width = shape_property.array_length
+                if attribute_width == 0:
+                    # 0 means unlimited, though this should never happen for a shape key attribute
+                    continue
+            else:
+                attribute_width = 1
 
-        if new_basis_affected_by_own_application:
-            # All keys in keys_recursive_relative_to_new_basis must also be in keys_recursive_relative_to_basis
-            # All the keys that will have only difference_co_flat_scaled added to them are those which are neither
-            # new_basis nor relative recursive to new_basis
-            keys_not_relative_recursive_to_new_basis_and_not_new_basis = (keys_relative_recursive_to_basis - keys_relative_recursive_to_new_basis) - {new_basis_shapekey}
+            # Array of Vector type is flattened by foreach_get into a sequence so the length needs to be multiplied by 3
+            attribute_array_length = key_length * attribute_width
 
-            # This for loop is where most of the execution will happen for 'normal' setups of lots of shape keys relative to the first shape
-            # I looked into using multiprocessing to parallelise this, but type(key_block) and type(key_block.data) can't be pickled,
-            # i.e. you can't parallelise a list of either of them
+            # Store shape key attribute for new_basis
+            # There's no need to initialise the elements to anything since they will all be overwritten
+            new_basis_co_flat = np.empty(attribute_array_length, dtype=attribute_type)
+            new_basis_relative_co_flat = np.empty(attribute_array_length, dtype=attribute_type)
+
+            new_basis_shapekey.data.foreach_get(attribute_name, new_basis_co_flat)
+            new_basis_shapekey.relative_key.data.foreach_get(attribute_name, new_basis_relative_co_flat)
+
+            # This is change in attribute of the active shape key at a value of 1.0
+            attribute_difference = np.subtract(new_basis_co_flat, new_basis_relative_co_flat)
+
+            # Scale the difference based on the value of the active key
+            attribute_difference_value_scaled = np.multiply(attribute_difference, new_basis_shapekey.value)
+
+            # We can reuse these arrays over and over instead of creating new ones each time
+            temp_array1 = np.empty(attribute_array_length, dtype=attribute_type)
+            temp_array2 = np.empty(attribute_array_length, dtype=attribute_type)
+
+            # Scale the difference based on the vertex group of the active key
+            #   Ideally, we would scale attribute_difference by the weight of each vertex/point in new_basis_shapekey.vertex_group.
+            #   Unfortunately, Blender has no efficient way to get all the weights for a particular vertex group, so it's
+            #   pretty much always a few times faster to create a new shape from mix and get its attributes with foreach_get(...)
+            #   Tiny meshes, think <1000 vertices, are the exception.
             #
-            # Add difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
-            # We already have the co array for new_basis_shapekey.relative_key, so do it separately to save a foreach_get call
-            new_basis_shapekey.relative_key.data.foreach_set('co', np.add(new_basis_relative_co_flat, difference_co_flat_scaled, out=temp_co_array))
-            # And now the rest of the shape keys
-            for key_block in keys_not_relative_recursive_to_new_basis_and_not_new_basis - {new_basis_shapekey.relative_key}:
-                key_block.data.foreach_get('co', temp_co_array)
-                key_block.data.foreach_set('co', np.add(temp_co_array, difference_co_flat_scaled, out=temp_co_array))
-
-            # We need the difference between r(NB) and r(NB).r to be the negative of
-            #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
-            #                             = -(NB - NB.r) * NB.v * NB.vg
-            # NB.vg cancels on both sides, leaving:
-            #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
-            # Rearranging for r(NB) gives:
-            #   r(NB) = r(NB).r - (NB - NB.r) * NB.v
-            # Note that (NB - NB.r) * NB.v = difference_co_flat_value_scaled so:
-            #   r(NB) = r(NB).r - difference_co_flat_value_scaled
-            # Note that r(NB).r = NB.r + difference_co_flat_scaled as we've added that to it
-            #   r(NB) = NB.r + difference_co_flat_scaled - difference_co_flat_value_scaled
-            # Note that r(NB) = NB + X where X is what we want to find to add to NB (and all keys relative to it
-            # so that their relative differences remain the same)
-            #   NB + X = NB.r + difference_co_flat_scaled - difference_co_flat_value_scaled
-            #   X = NB.r - NB + difference_co_flat_scaled - difference_co_flat_value_scaled
-            #   X = -(NB - NB.r) + difference_co_flat_scaled - difference_co_flat_value_scaled
-            # Fully expanding out would give:
-            #   X = -(NB - NB.r) + (NB - NB.r) * NB.v * NB.vg - (NB - NB.r) * NB.v
+            #   For reference, the ways to get all vertex weights that you can find on stackoverflow:
+            #       Weights from vertices:
+            #           This scales really poorly when lots of vertices are in multiple vertex groups, especially when the vertices are not in the vertex group we want to check,
+            #           because for every vertex v, v.groups has to be iterated until either the vertex group is found or iteration finishes without finding the vertex group
+            #               vertex_weights = [next((g.weight for g in v.groups if g.group == vertex_group_index), 0) for v in data.vertices]
+            #           Equivalent to:
+            #               vertex_weights = []
+            #               for v in data.vertices:
+            #                   weight = 0
+            #                   for g in v.groups:
+            #                       if g.group == vertex_group_index:
+            #                           weight = g.weight
+            #                           break
+            #                   vertex_weights.append(weight)
             #
-            # In the case of there being a vertex group, it's too costly to calculate NB.vg on its own, so we'll leave it at
-            #   X = -(NB - NB.r) + difference_co_flat_scaled - (NB - NB.r) * NB.v
-            #   Which we can either factor to
-            #       X = (NB - NB.r)(-1 - NB.v) + difference_co_flat_scaled
-            #       X = difference_co_flat * (-1 - NB.v) + difference_co_flat_scaled
-            #   Or, as NB - NB.r = difference_co_flat, calculate as, which may be faster since it only uses addition/subtraction
-            #       X = -difference_co_flat + difference_co_flat_scaled - difference_co_flat_value_scaled
-            #
-            # The numpy functions take close to a negligible amount of the total function time, so the choice isn't very
-            # important, however, from my own benchmarks, np.multiply(array1, scalar, out=output_array) starts to scale
-            # slightly better than np.add(array1, array2, out=output_array) once array1 gets to around 9000 elements or
-            # more
-            # I guess this is due to the fact that the add operation needs to do 1 extra array access per element, and
-            # that eventually this surpasses the effect of the multiply operation being more expensive than the add
-            # operation
-            # In this case, the array length is 3*num_verts, meaning the multiplication option gets better at around
-            # 3000 vertices. We'll use the multiplication option
+            #       Weights from vertex group:
+            #           This doesn't scale poorly with lots of vertex groups like the other way does, but, if most of the vertices aren't in the vertex group, relying on catching
+            #           the exception is really slow. If Blender had a similar method that returned a default value or even just None instead of throwing an exception, this would
+            #           be much faster, though maybe still a little slower than creating a new key from mix.
+            #           Ideally we'd want a fast access method like foreach_get(...) instead of having to iterate through all the vertices individually
+            #               vertex_weights = []
+            #               for i in range(key_length):
+            #                   try:
+            #                       weight = vertex_group.weight(i)
+            #                   except:
+            #                       weight = 0
+            #                   vertex_weights.append(weight)
             if new_basis_shapekey_vertex_group:
-                np.multiply(difference_co_flat, -1 - new_basis_shapekey.value, out=temp_co_array2)
-                np.add(temp_co_array2, difference_co_flat_scaled, out=temp_co_array2)
+                if vertex_weights:
+                    if attribute_width != 1:
+                        vertex_weights_repeated = np.repeat(vertex_weights, attribute_width)
+                    else:
+                        vertex_weights_repeated = vertex_weights
+                    attribute_difference_all_scaled = np.multiply(attribute_difference_value_scaled, vertex_weights_repeated)
+                elif new_basis_mixed_vg:
+                    # Use the temp arrays, new names for convenience
+                    temp_shape_co_flat = temp_array1
+                    temp_shape_relative_co_flat = temp_array2
+
+                    new_basis_mixed_vg.data.foreach_get(attribute_name, temp_shape_co_flat)
+                    # Often, the relative keys are the same, e.g. they're both the 'basis', but if they're not we'll need to get its data
+                    if new_basis_mixed_vg.relative_key != new_basis_shapekey.relative_key:
+                        new_basis_mixed_vg.relative_key.data.foreach_get(attribute_name, temp_shape_relative_co_flat)
+
+                    attribute_difference_all_scaled = np.subtract(temp_shape_co_flat, temp_shape_relative_co_flat)
+                else:
+                    raise RuntimeError("Unreachable code")
+            else:
+                attribute_difference_all_scaled = attribute_difference_value_scaled
+
+            if new_basis_affected_by_own_application:
+                # All keys in keys_recursive_relative_to_new_basis must also be in keys_recursive_relative_to_basis
+                # All the keys that will have only attribute_difference_all_scaled added to them are those which are neither
+                # new_basis nor relative recursive to new_basis
+                keys_not_relative_recursive_to_new_basis_and_not_new_basis = (keys_relative_recursive_to_basis - keys_relative_recursive_to_new_basis) - {new_basis_shapekey}
+
+                # This for loop is where most of the execution will happen for 'normal' setups of lots of shape keys relative to the first shape
+                # I looked into using multiprocessing to parallelise this, but type(key_block) and type(key_block.data) can't be pickled,
+                # i.e. you can't parallelise a list of either of them
+                #
+                # Add difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the value and vertex_group of new_basis_shapekey)
+                # We already have the co array for new_basis_shapekey.relative_key, so do it separately to save a foreach_get call
+                new_basis_shapekey.relative_key.data.foreach_set(attribute_name, np.add(new_basis_relative_co_flat, attribute_difference_all_scaled, out=temp_array1))
+                # And now the rest of the shape keys
+                for key_block in keys_not_relative_recursive_to_new_basis_and_not_new_basis - {new_basis_shapekey.relative_key}:
+                    key_block.data.foreach_get(attribute_name, temp_array1)
+                    key_block.data.foreach_set(attribute_name, np.add(temp_array1, attribute_difference_all_scaled, out=temp_array1))
+
+                # We need the difference between r(NB) and r(NB).r to be the negative of
+                #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
+                #                             = -(NB - NB.r) * NB.v * NB.vg
+                # NB.vg cancels on both sides, leaving:
+                #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
+                # Rearranging for r(NB) gives:
+                #   r(NB) = r(NB).r - (NB - NB.r) * NB.v
+                # Note that (NB - NB.r) * NB.v = attribute_difference_value_scaled so:
+                #   r(NB) = r(NB).r - attribute_difference_value_scaled
+                # Note that r(NB).r = NB.r + attribute_difference_all_scaled as we've added that to it
+                #   r(NB) = NB.r + attribute_difference_all_scaled - attribute_difference_value_scaled
+                # Note that r(NB) = NB + X where X is what we want to find to add to NB (and all keys relative to it
+                # so that their relative differences remain the same)
+                #   NB + X = NB.r + attribute_difference_all_scaled - attribute_difference_value_scaled
+                #   X = NB.r - NB + attribute_difference_all_scaled - attribute_difference_value_scaled
+                #   X = -(NB - NB.r) + attribute_difference_all_scaled - attribute_difference_value_scaled
+                # Fully expanding out would give:
+                #   X = -(NB - NB.r) + (NB - NB.r) * NB.v * NB.vg - (NB - NB.r) * NB.v
+                #
+                # In the case of there being a vertex group, it's too costly to calculate NB.vg on its own, so we'll leave it at
+                #   X = -(NB - NB.r) + attribute_difference_all_scaled - (NB - NB.r) * NB.v
+                #   Which we can either factor to
+                #       X = (NB - NB.r)(-1 - NB.v) + attribute_difference_all_scaled
+                #       X = attribute_difference * (-1 - NB.v) + attribute_difference_all_scaled
+                #   Or, as NB - NB.r = attribute_difference, calculate as, which may be faster since it only uses addition/subtraction
+                #       X = -attribute_difference + attribute_difference_all_scaled - attribute_difference_value_scaled
+                #
+                # The numpy functions take close to a negligible amount of the total function time, so the choice isn't very
+                # important, however, from my own benchmarks, np.multiply(array1, scalar, out=output_array) starts to scale
+                # slightly better than np.add(array1, array2, out=output_array) once array1 gets to around 9000 elements or
+                # more
+                # I guess this is due to the fact that the add operation needs to do 1 extra array access per element, and
+                # that eventually this surpasses the effect of the multiply operation being more expensive than the add
+                # operation
+                # In this case, the array length is 3*key_length, meaning the multiplication option gets better at around
+                # 3000 vertices. We'll use the multiplication option
+                if new_basis_shapekey_vertex_group:
+                    np.multiply(attribute_difference, -1 - new_basis_shapekey.value, out=temp_array2)
+                    np.add(temp_array2, attribute_difference_all_scaled, out=temp_array2)
+
+                    # We already have the co array for new_basis_shapekey, so we can do it separately from the others to
+                    # save a foreach_get call
+                    new_basis_shapekey.data.foreach_set(attribute_name, np.add(new_basis_co_flat, temp_array2, out=temp_array1))
+
+                    # Now add to the rest of the keys
+                    for key_block in keys_relative_recursive_to_new_basis:
+                        key_block.data.foreach_get(attribute_name, temp_array1)
+                        key_block.data.foreach_set(attribute_name, np.add(temp_array1, temp_array2, out=temp_array1))
+                # But for there not being a vertex group, the NB.vg term can be eliminated as it becomes effectively 1.0
+                #   X = -(NB - NB.r) + (NB - NB.r) * NB.v - (NB - NB.r) * NB.v
+                # Then the last part cancels out
+                #   X = -(NB - NB.r)
+                # Giving X = -attribute_difference
+                else:
+                    # Instead of adding the attribute_difference_all_scaled to each key it will be subtracted from each key instead
+                    # We already have the co array for new_basis_shapekey, so we can do it separately to avoid a foreach_get
+                    # Note that
+                    #   attribute_difference = NB - NB.r
+                    # Rearrange for NB.r
+                    #   NB.r = NB - attribute_difference
+                    # Instead of doing np.subtract(new_basis_co_flat, attribute_difference) we can simply set NB to NB.r
+                    new_basis_shapekey.data.foreach_set(attribute_name, new_basis_relative_co_flat)
+                    # And the rest of the shape keys
+                    for key_block in keys_relative_recursive_to_new_basis:
+                        key_block.data.foreach_get(attribute_name, temp_array1)
+                        key_block.data.foreach_set(attribute_name, np.subtract(temp_array1, attribute_difference, out=temp_array1))
+            else:
+                # New basis isn't relative to Basis so keys New basis is recursively relative to will remain unchanged
+                # Keys recursively relative to Basis and Keys recursively relative to new basis will be mutually exclusive
+                # Typical user setups have all the shape keys immediately relative to Basis, so this won't be used much
+
+                # Add the difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the
+                # value and vertex_group of new_basis_shapekey)
+                for key_block in keys_relative_recursive_to_basis:
+                    key_block.data.foreach_get(attribute_name, temp_array1)
+                    key_block.data.foreach_set(attribute_name, np.add(temp_array1, attribute_difference_all_scaled, out=temp_array1))
+
+                # The difference between the reverted key and its relative key needs to equal the negative of the
+                # difference between new_basis and new_basis.relative_key multiplied
+                # new_basis.vertex_group should be present on both
+                #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
+                #                             = -(NB - NB.r) * NB.v * NB.vg
+                # NB.vg cancels on both sides, leaving:
+                #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
+                # r(NB).r is unchanged, meaning r(NB).r = NB.r
+                #   r(NB) - NB.r = -(NB - NB.r) * NB.v
+                # r(NB) = X + NB where X is what we want to find to add
+                #   X + NB - NB.r = -(NB - NB.r) * NB.v
+                # Rearrange for X
+                #   X = -(NB - NB.r) - (NB - NB.r) * NB.v
+                #
+                # (NB - NB.r) can be factorised
+                #   X = (NB - NB.r)(-1 - NB.v)
+                # Note that (NB - NB.r) is attribute_difference, giving
+                #   X = attribute_difference * (-1 - NB.v)
+                #
+                # Alternatively, instead of factorising, note that (NB - NB.r) * NB.v is attribute_difference_value_scaled
+                #   X = -(NB - NB.r) - attribute_difference_value_scaled
+                # Note that (NB - NB.r) is attribute_difference, giving
+                #   X = -attribute_difference - attribute_difference_value_scaled
+                # Or
+                #   X = -(attribute_difference + attribute_difference_value_scaled)
+                #
+                # Since NB.vg isn't present, it doesn't matter whether new_basis_shapekey has a vertex_group or not
+                #
+                # As with before, we'll use the multiplication option due to it scaling slightly better with a larger
+                # number of vertices
+                # X = attribute_difference * (-1 - NB.v)
+                np.multiply(attribute_difference, -1 - new_basis_shapekey.value, out=temp_array2)
 
                 # We already have the co array for new_basis_shapekey, so we can do it separately from the others to
                 # save a foreach_get call
-                new_basis_shapekey.data.foreach_set('co', np.add(new_basis_co_flat, temp_co_array2, out=temp_co_array))
-
-                # Now add to the rest of the keys
+                new_basis_shapekey.data.foreach_set(attribute_name, np.add(new_basis_co_flat, temp_array2, out=temp_array1))
+                # And now the rest of the shape keys
                 for key_block in keys_relative_recursive_to_new_basis:
-                    key_block.data.foreach_get('co', temp_co_array)
-                    key_block.data.foreach_set('co', np.add(temp_co_array, temp_co_array2, out=temp_co_array))
-            # But for there not being a vertex group, the NB.vg term can be eliminated as it becomes effectively 1.0
-            #   X = -(NB - NB.r) + (NB - NB.r) * NB.v - (NB - NB.r) * NB.v
-            # Then the last part cancels out
-            #   X = -(NB - NB.r)
-            # Giving X = -difference_co_flat
-            else:
-                # Instead of adding the difference_co_flat_scaled to each key it will be subtracted from each key instead
-                # We already have the co array for new_basis_shapekey, so we can do it separately to avoid a foreach_get
-                # Note that
-                #   difference_co_flat = NB - NB.r
-                # Rearrange for NB.r
-                #   NB.r = NB - difference_co_flat
-                # Instead of doing np.subtract(new_basis_co_flat, difference_co_flat) we can simply set NB to NB.r
-                new_basis_shapekey.data.foreach_set('co', new_basis_relative_co_flat)
-                # And the rest of the shape keys
-                for key_block in keys_relative_recursive_to_new_basis:
-                    key_block.data.foreach_get('co', temp_co_array)
-                    key_block.data.foreach_set('co', np.subtract(temp_co_array, difference_co_flat, out=temp_co_array))
-        else:
-            # New basis isn't relative to Basis so keys New basis is recursively relative to will remain unchanged
-            # Keys recursively relative to Basis and Keys recursively relative to new basis will be mutually exclusive
-            # Typical user setups have all the shape keys immediately relative to Basis, so this won't be used much
+                    key_block.data.foreach_get(attribute_name, temp_array1)
+                    key_block.data.foreach_set(attribute_name, np.add(temp_array1, temp_array2, out=temp_array1))
 
-            # Add the difference between new_basis_shapekey and new_basis_shapekey.relative_key (scaled according to the
-            # value and vertex_group of new_basis_shapekey)
-            for key_block in keys_relative_recursive_to_basis:
-                key_block.data.foreach_get('co', temp_co_array)
-                key_block.data.foreach_set('co', np.add(temp_co_array, difference_co_flat_scaled, out=temp_co_array))
-
-            # The difference between the reverted key and its relative key needs to equal the negative of the
-            # difference between new_basis and new_basis.relative_key multiplied
-            # new_basis.vertex_group should be present on both
-            #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
-            #                             = -(NB - NB.r) * NB.v * NB.vg
-            # NB.vg cancels on both sides, leaving:
-            #   r(NB) - r(NB).r = -(NB - NB.r) * NB.v
-            # r(NB).r is unchanged, meaning r(NB).r = NB.r
-            #   r(NB) - NB.r = -(NB - NB.r) * NB.v
-            # r(NB) = X + NB where X is what we want to find to add
-            #   X + NB - NB.r = -(NB - NB.r) * NB.v
-            # Rearrange for X
-            #   X = -(NB - NB.r) - (NB - NB.r) * NB.v
-            #
-            # (NB - NB.r) can be factorised
-            #   X = (NB - NB.r)(-1 - NB.v)
-            # Note that (NB - NB.r) is difference_co_flat, giving
-            #   X = difference_co_flat * (-1 - NB.v)
-            #
-            # Alternatively, instead of factorising, note that (NB - NB.r) * NB.v is difference_co_flat_value_scaled
-            #   X = -(NB - NB.r) - difference_co_flat_value_scaled
-            # Note that (NB - NB.r) is difference_co_flat, giving
-            #   X = -difference_co_flat - difference_co_flat_value_scaled
-            # Or
-            #   X = -(difference_co_flat + difference_co_flat_value_scaled)
-            #
-            # Since NB.vg isn't present, it doesn't matter whether new_basis_shapekey has a vertex_group or not
-            #
-            # As with before, we'll use the multiplication option due to it scaling slightly better with a larger
-            # number of vertices
-            # X = difference_co_flat * (-1 - NB.v)
-            np.multiply(difference_co_flat, -1 - new_basis_shapekey.value, out=temp_co_array2)
-
-            # We already have the co array for new_basis_shapekey, so we can do it separately from the others to
-            # save a foreach_get call
-            new_basis_shapekey.data.foreach_set('co', np.add(new_basis_co_flat, temp_co_array2, out=temp_co_array))
-            # And now the rest of the shape keys
-            for key_block in keys_relative_recursive_to_new_basis:
-                key_block.data.foreach_get('co', temp_co_array)
-                key_block.data.foreach_set('co', np.add(temp_co_array, temp_co_array2, out=temp_co_array))
+        # Remove new_basis_mixed_vg
+        if new_basis_mixed_vg:
+            active_index = meshlike.active_shape_key_index
+            meshlike.shape_key_remove(new_basis_mixed_vg)
+            meshlike.active_shape_key_index = active_index
 
     # To use the blend_from_shape modifier, all the vertices need to be visible and selected in order to affect them all (faces and edges don't matter)
     # use_shape_key_edit_mode needs to be disabled because if enabled it could be slow if other shape keys are active and if the active shape key does not have
