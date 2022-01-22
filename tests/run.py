@@ -36,7 +36,8 @@ import os
 import itertools
 from subprocess import Popen, PIPE
 from optparse import OptionParser
-from termcolor import colored
+from tests.armatures.termcolor import colored
+from collections import namedtuple
 
 
 # Test whether a path exists.  Returns False for broken symbolic links
@@ -48,29 +49,49 @@ def exists(path):
     return True
 
 
+# Improved NamedTuple declaration was added in Python 3.6, so we have to use the old way
+# (dataclasses were introduced in Python 3.7 so can't use them either)
+DownloadData = namedtuple('DownloadData', "directory file_prefix files")
+
+
 # Add any test models you want here!
-download_data = {
-    'ryuko': 'https://www.dropbox.com/s/74fj6msbyn3c7rn/armature.ryuko.blend?dl=1',
-    'bonetranslationerror': 'https://www.dropbox.com/s/ckoseplcfdozpeu/armature.translationerror.blend?dl=1',
-}
+download_data = [
+    DownloadData(
+        directory='armatures',
+        file_prefix='armature.',
+        files={
+            'ryuko': 'https://www.dropbox.com/s/74fj6msbyn3c7rn/armature.ryuko.blend?dl=1',
+            'bonetranslationerror': 'https://www.dropbox.com/s/ckoseplcfdozpeu/armature.translationerror.blend?dl=1',
+        }
+    ),
+    DownloadData(
+        directory='shapekey',
+        file_prefix='shapekey.',
+        files={
+            'shapekeytests': 'https://www.dropbox.com/s/jaxbrh3alnhcjo5/shapekey.ShapeKeyTestBlendSingleVert.blend?dl=1',
+        }
+    ),
+]
 
 # Download them
-for name in download_data:
-    url = download_data[name]
-    filename = str('armature.' + str(name) + '.blend')
-    new_file_path = os.path.join(os.path.dirname(__file__), 'armatures', 'armature.' + str(name) + '.blend')
-    if exists(new_file_path) is False:
-        print('Notice: Downloaded ' + filename + ' because it didn\'t existed')
-        with urllib.request.urlopen(url) as response, open(new_file_path, 'wb') as out_file:
-            shutil.copyfileobj(response, out_file)
+for data in download_data:
+    directory = str(data.directory)
+    file_prefix = str(data.file_prefix)
+    for name, url in data.files.items():
+        filename = file_prefix + name + '.blend'
+        new_file_path = os.path.join(os.path.dirname(__file__), directory, filename)
+        if exists(new_file_path) is False:
+            print('Notice: Downloaded ' + filename + ' because it didn\'t exist')
+            with urllib.request.urlopen(url) as response, open(new_file_path, 'wb') as out_file:
+                shutil.copyfileobj(response, out_file)
 
 start_time = time.time()
 
 parser = OptionParser()
 parser.add_option('-b', '--blend', dest='blender_exec', help='sets the blender executable', metavar='BLENDER', default='blender')
-parser.add_option('-t', '--test', dest='globber_test', help='sets the unit to test', metavar='TEST', default='*')
+parser.add_option('-t', '--test', dest='globber_test', help='sets the unit to test', metavar='TEST', default='armatures/*')
 parser.add_option('-c', '--ci', dest='ci', help='is travis running this test?', metavar='CI', default=False)
-parser.add_option('-a', '--armature', dest='globber_armature', help='sets the armature blend file to test', metavar='ARMATURE', default='*')
+parser.add_option('-f', '--files', dest='globber_blend_files', help='sets the blend file(s) to test, relative to the \'tests\' directory', metavar='FILES', default='armatures/armature.*')
 parser.add_option('-v', '--verbose', dest='verbosity', help='verbosity unit tests', metavar='VERBOSE', default=False)
 
 (options, args) = parser.parse_args()
@@ -78,7 +99,7 @@ parser.add_option('-v', '--verbose', dest='verbosity', help='verbosity unit test
 ci = options.ci
 blender_exec = options.blender_exec
 globber_test = options.globber_test
-globber_armature = options.globber_armature
+globber_blend_files = options.globber_blend_files
 verbosity = options.verbosity
 
 scripts = 0
@@ -125,9 +146,10 @@ def print_output(raw, output):
         print(raw)
 
 
-# iterate over each *.test.py file in the 'tests' directory
-# and open up blender with the armature files found in 'tests/armatures' directory
-for blend_file in glob.glob('./tests/armatures/armature.' + globber_armature + '.blend'):
+# iterate over each globber_blend_files.blend file relative to the 'tests' directory
+# then iterate over each globber_test.test.py file relative to the 'tests' directory
+# then open up blender with the current blend file and run the current test
+for blend_file in glob.glob('./tests/' + globber_blend_files + '.blend'):
     for file in glob.glob('./tests/' + globber_test + '.test.py'):
         if os.path.basename(file) in scripts_only_executed_once:
             if os.path.basename(file) in scripts_executed:
