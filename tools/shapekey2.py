@@ -74,11 +74,11 @@ class ShapeKeyApplier(bpy.types.Operator):
 
         # Create a map of key : [keys relative to key]
         # Effectively the reverse of the key.relative_key relation
-        reverse_relative_map2 = ShapeKeyApplier.ReverseRelativeMap(mesh)
+        reverse_relative_map = ShapeKeyApplier.ReverseRelativeMap(mesh)
 
         # new_basis_shapekey will only be included if it's relative to itself (new_basis_shapekey cannot be the first shape key as poll() ensures
         # that the index of the active shape key is greater than 0)
-        keys_relative_recursive_to_new_basis = reverse_relative_map2.get_relative_recursive_keys(new_basis_shapekey)
+        keys_relative_recursive_to_new_basis = reverse_relative_map.get_relative_recursive_keys(new_basis_shapekey)
 
         # Cancel execution if the new basis shape key is relative to itself (via a loop, since poll already returns false for being immediately relative to itself since that will always do nothing)
         # If the relative keys loop back around, then if the key is turned into its reverse after applying, it would affect all keys that it's relative to
@@ -100,7 +100,7 @@ class ShapeKeyApplier(bpy.types.Operator):
         old_basis_shapekey = mesh.data.shape_keys.key_blocks[0]
 
         # old_basis_shapekey will only be included if it's relative to itself or if it's the first shape key
-        keys_relative_recursive_to_old_basis = reverse_relative_map2.get_relative_recursive_keys(old_basis_shapekey)
+        keys_relative_recursive_to_old_basis = reverse_relative_map.get_relative_recursive_keys(old_basis_shapekey)
 
         # 0.0 would have no effect, so set to 1.0
         if new_basis_shapekey.value == 0.0:
@@ -479,7 +479,7 @@ class ShapeKeyApplier(bpy.types.Operator):
         def __init__(self, mesh):
             self.mesh = mesh
 
-        def __store__(self):
+        def __store(self):
             if not self.is_set_up:
                 data = self.mesh.data
                 num_verts = len(data.vertices)
@@ -507,7 +507,7 @@ class ShapeKeyApplier(bpy.types.Operator):
 
         def pre_edit_mode_setup(self):
             if not self.is_set_up:
-                self.__store__()
+                self.__store()
 
                 data = self.mesh.data
 
@@ -568,10 +568,10 @@ class ShapeKeyApplier(bpy.types.Operator):
         blend_from_shape_edit_mode_helper = ShapeKeyApplier.BlendFromShapeEditModeHelper(mesh)
 
         #   add(temp_shape, value=1) to shapes in r_relative(target_basis) | {target_basis}
-        ShapeKeyApplier.multi_shape_add_key(shape_key_to_add=temp_shape,
-                                            shapes_to_affect=keys_relative_recursive_to_basis | {old_basis_shapekey},
-                                            mesh=mesh,
-                                            edit_mode_helper=blend_from_shape_edit_mode_helper)
+        ShapeKeyApplier.__multi_add_internal(shape_key_to_add=temp_shape,
+                                             shapes_to_affect=keys_relative_recursive_to_basis | {old_basis_shapekey},
+                                             mesh=mesh,
+                                             edit_mode_helper=blend_from_shape_edit_mode_helper)
 
         # Remove the temporary key
         mesh.shape_key_remove(temp_shape)
@@ -603,11 +603,11 @@ class ShapeKeyApplier(bpy.types.Operator):
         #     X = new_basis_shapekey * (-1 - NB.v)
         #
         #   add(NB, value=-1 - NB.v) to shapes in r_relative(NB) | {NB}
-        ShapeKeyApplier.multi_shape_add_key(shape_key_to_add=new_basis_shapekey,
-                                            shapes_to_affect=keys_relative_recursive_to_new_basis | {new_basis_shapekey},
-                                            mesh=mesh,
-                                            value=-1 - new_basis_shapekey.value,
-                                            edit_mode_helper=blend_from_shape_edit_mode_helper)
+        ShapeKeyApplier.__multi_add_internal(shape_key_to_add=new_basis_shapekey,
+                                             shapes_to_affect=keys_relative_recursive_to_new_basis | {new_basis_shapekey},
+                                             mesh=mesh,
+                                             value=-1 - new_basis_shapekey.value,
+                                             edit_mode_helper=blend_from_shape_edit_mode_helper)
 
         # Restore vert/edge/face hide and select status, and use_shape_key_edit_mode
         blend_from_shape_edit_mode_helper.restore()
@@ -616,7 +616,7 @@ class ShapeKeyApplier(bpy.types.Operator):
         mesh.active_shape_key_index = new_basis_shapekey_index
 
     @staticmethod
-    def multi_shape_add_key(*, shape_key_to_add, shapes_to_affect, mesh, value=1.0, edit_mode_helper):
+    def __multi_add_internal(*, shape_key_to_add, shapes_to_affect, mesh, value=1.0, edit_mode_helper):
         to_add_relative_key = shape_key_to_add.relative_key
 
         if shapes_to_affect and value != 0.0 and to_add_relative_key != shape_key_to_add:
