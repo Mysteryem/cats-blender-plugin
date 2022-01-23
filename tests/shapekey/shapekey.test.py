@@ -27,7 +27,7 @@ import unittest
 import sys
 import bpy
 
-from tools.common import version_2_79_or_older
+from cats.tools.common import version_2_79_or_older
 
 
 class TestAddon(unittest.TestCase):
@@ -46,8 +46,8 @@ class TestAddon(unittest.TestCase):
     def assertShapeKeysEqual(self, obj, expected_flattened_co_array, *shape_key_names):
         for shape_key_name in shape_key_names:
             shape_key = obj.data.shape_keys.key_blocks[shape_key_name]
-            flattened_co_array = [None, ] * len(shape_key.data)
-            shape_key.foreach_get('co', flattened_co_array)
+            flattened_co_array = [None, ] * (len(shape_key.data) * 3)
+            shape_key.data.foreach_get('co', flattened_co_array)
             self.assertEqual(expected_flattened_co_array, flattened_co_array,
                              msg="Expected {name} to be {expected}, but it was {actual}"
                              .format(name=shape_key_name, expected=expected_flattened_co_array, actual=flattened_co_array))
@@ -67,19 +67,19 @@ class TestAddon(unittest.TestCase):
 
     # When there are no shape keys, poll() should return False, resulting in a RuntimeError
     def test_no_shape_keys(self):
-        obj = self.set_active_by_name('01_NoShapes')
+        self.set_active_by_name('01_NoShapes')
         self.assertRaises(RuntimeError, bpy.ops.cats_shapekey.shape_key_to_basis)
 
     # When the basis is the active shape key, poll() should return False, resulting in a RuntimeError
     def test_active_is_basis(self):
-        obj = self.set_active_by_name('02_BasisActive')
+        self.set_active_by_name('02_BasisActive')
         self.assertRaises(RuntimeError, bpy.ops.cats_shapekey.shape_key_to_basis)
 
     # When the basis is the active shape key, poll() should return False, resulting in a RuntimeError
     # This test is to show that poll() isn't returning False in test_active_is_basis just because the Basis is relative
     # to itself
     def test_active_is_basis_relative_to_key1(self):
-        obj = self.set_active_by_name('03_BasisActiveRelativeToKey1')
+        self.set_active_by_name('03_BasisActiveRelativeToKey1')
         self.assertRaises(RuntimeError, bpy.ops.cats_shapekey.shape_key_to_basis)
 
     # When the active shape key is relative to itself, poll() should return False, resulting in a RuntimeError
@@ -91,7 +91,7 @@ class TestAddon(unittest.TestCase):
     # set to a shape key that reverts its initial application.
     def test_active_recursively_relative_to_self(self):
         self.set_active_by_name('05_ActiveRecursivelyRelativeToSelf')
-        self.assertEqual(bpy.ops.cats_shapekey.shape_key_to_basis(), {'CANCELLED'})
+        self.assertRaises(RuntimeError, bpy.ops.cats_shapekey.shape_key_to_basis)
 
     # The active shape (Key 1 [1,1,1]) is relative to the Basis
     # Basis is [0,0,0]
@@ -184,7 +184,7 @@ class TestAddon(unittest.TestCase):
     #     Key 3 becomes Key 3 + (Key 2 - Key 1) = [1,1,1]
     #     Key 4 becomes Key 4 + (Key 2 - Key 1) = [1,1,1]
     #     Key 5 remains as [0,0,0]
-    #     Key 6 becomes Key 6 - (Key 2 - Key 1) - (Key 2 - Key 1) = [-1,-1,-1]
+    #     Key 6 becomes Key 6 - (Key 2 - Key 1) - (Key 2 - Key 1) = [-2,-2,-2]
     #     Key 7 remains as [0,0,0]
     #     Key 8 remains as [0,0,0]
     def separate_from_basis(self, object_name):
@@ -196,7 +196,8 @@ class TestAddon(unittest.TestCase):
 
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Basis', 'Key 3', 'Key 4')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Key 1', 'Key 5', 'Key 7', 'Key 8')
-        self.assertShapeKeysEqual(obj, [-1, -1, -1], 'Key 2 - Reverted', 'Key 6')
+        self.assertShapeKeysEqual(obj, [-1, -1, -1], 'Key 2 - Reverted')
+        self.assertShapeKeysEqual(obj, [-2, -2, -2], 'Key 6')
 
         return obj
 
@@ -227,7 +228,7 @@ class TestAddon(unittest.TestCase):
         self.assertEqual(bpy.ops.cats_shapekey.shape_key_to_basis(), {'FINISHED'})
 
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Basis')
-        self.assertShapeKeysEqual(obj, [0, 0, 0], 'Key 1')
+        self.assertShapeKeysEqual(obj, [0, 0, 0], 'Key 1 - Reverted')
         self.assertShapeKeysRelativeTo(obj, 'Basis', 'Key 1 - Reverted')
         self.assertShapeKeysRelativeTo(obj, 'Key 1 - Reverted', 'Basis')
 
@@ -275,7 +276,8 @@ class TestAddon(unittest.TestCase):
     #     Key 1 is [1,1,1] and is relative to Basis
     #     When applied,
     #         Basis becomes Basis + (Key 1 - Basis) * 0.25 = [0.25,0.25,0.25]
-    #         Key 1 becomes Key 1 - (Key 1 - Basis) = [0,0,0]
+    #         Key 1 becomes Key 1 - (Key 1 - Basis) + (Key 1 - Basis) * 0.25 - (Key 1 - Basis)
+    #                     = Key 1 - (Key 1 - Basis) * 1.75 = [-0.75,-0.75,-0.75]
     def vertex_group(self, object_name):
         obj = self.set_active_by_name(object_name)
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis')
@@ -285,7 +287,7 @@ class TestAddon(unittest.TestCase):
         self.assertEqual(bpy.ops.cats_shapekey.shape_key_to_basis(), {'FINISHED'})
 
         self.assertShapeKeysEqual(obj, [0.25, 0.25, 0.25], 'Basis')
-        self.assertShapeKeysEqual(obj, [0, 0, 0], 'Key 1 - Reverted')
+        self.assertShapeKeysEqual(obj, [-0.75, -0.75, -0.75], 'Key 1 - Reverted')
         self.assertShapeKeyVertexGroupNameEquals(obj, 'Group', 'Key 1 - Reverted')
 
         return obj
@@ -304,7 +306,9 @@ class TestAddon(unittest.TestCase):
     #     Key 1 is [1,1,1] and is relative to Basis
     #     When applied,
     #         Basis becomes Basis + (Key 1 - Basis) * 0.25 * 0.25 = [0.0625,0.0625,0.0625]
-    #         Key 1 becomes Key 1 - (Key 1 - Basis) = [0,0,0]
+    #         Key 1 becomes Key 1 - (Key 1 - Basis) + (Key 1 - Basis) * 0.25 * 0.25 - (Key 1 - Basis) * 0.25
+    #                     = Key 1 - (Key 1 - Basis) * (1 - 0.0625 + 0.25)
+    #                     = Key 1 - (Key 1 - Basis) * (1.1875) = [-0.1875,-0.1875,-0.1875]
     def non_zero_value_and_vertex_group(self, object_name):
         obj = self.set_active_by_name(object_name)
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis')
@@ -315,7 +319,7 @@ class TestAddon(unittest.TestCase):
         self.assertEqual(bpy.ops.cats_shapekey.shape_key_to_basis(), {'FINISHED'})
 
         self.assertShapeKeysEqual(obj, [0.0625, 0.0625, 0.0625], 'Basis')
-        self.assertShapeKeysEqual(obj, [0, 0, 0], 'Key 1 - Reverted')
+        self.assertShapeKeysEqual(obj, [-0.1875, -0.1875, -0.1875], 'Key 1 - Reverted')
         self.assertShapeKeyVertexGroupNameEquals(obj, 'Group', 'Key 1 - Reverted')
 
         return obj
