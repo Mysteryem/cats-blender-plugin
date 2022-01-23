@@ -140,7 +140,7 @@ class ShapeKeyApplier(bpy.types.Operator):
         new_basis_shapekey.slider_max = 1.0
 
         response_message = 'ShapeKeyApplier.successRemoved' if reverted else 'ShapeKeyApplier.successSet'
-        self.report({'INFO'}, t(response_message, name=new_basis_shapekey.name))
+        self.report({'INFO'}, t(response_message, name=old_name))
         return {'FINISHED'}
 
     class ReverseRelativeMap:
