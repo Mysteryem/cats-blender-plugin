@@ -310,14 +310,17 @@ class ShapeKeyApplier(bpy.types.Operator):
             # Restore whatever got changed in order to isolate the active shape key
             restore_function()
 
-            # Use the temp arrays, new names for convenience
+            # Use the temp array, new name for convenience
             temp_shape_co_flat = temp_co_array
-            temp_shape_relative_co_flat = temp_co_array2
 
             new_basis_mixed.data.foreach_get('co', temp_shape_co_flat)
+
             # Often, the relative keys are the same, e.g. they're both the 'basis', but if they're not we'll need to get its data
-            if new_basis_mixed.relative_key != new_basis_shapekey.relative_key:
-                new_basis_mixed.relative_key.data.foreach_get('co', temp_shape_relative_co_flat)
+            if new_basis_mixed.relative_key == new_basis_shapekey.relative_key:
+                temp_shape_relative_co_flat = new_basis_relative_co_flat
+            else:
+                new_basis_mixed.relative_key.data.foreach_get('co', temp_co_array2)
+                temp_shape_relative_co_flat = temp_co_array2
 
             difference_co_flat_scaled = np.subtract(temp_shape_co_flat, temp_shape_relative_co_flat)
 
