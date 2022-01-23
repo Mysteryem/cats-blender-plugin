@@ -38,9 +38,7 @@ import os
 import itertools
 from subprocess import Popen, PIPE
 from optparse import OptionParser
-# If you intend to run this file as a module, from the main directory, e.g. python -m tests.run --blend<path to blender>
-# you will need to add "tests." to the start of this import
-from armatures.termcolor import colored
+from termcolor import colored
 from collections import namedtuple
 
 
