@@ -28,7 +28,10 @@
 
 # To run these tests, run this file as a script, e.g.:
 # python run.py --blend=<path to blender executable>
-import logging
+# The blender executable needs to have Cats installed such that Cats' main module is called "cats" without quotes
+# Remember to run the tests against at least both blender 2.79 and the newest blender version supported by Cats
+# The python version you use to run the script is irrelevant to the tests since blender will use its python version when
+# running the tests
 import urllib.request
 import shutil
 import time
@@ -51,10 +54,7 @@ def exists(path):
     return True
 
 
-# Improved NamedTuple declaration was added in Python 3.6, so we have to use the old way
-# (dataclasses were introduced in Python 3.7 so can't use them either)
-DownloadData = namedtuple('DownloadData', "directory file_prefix files")
-
+DownloadData = namedtuple('DownloadData', ['directory', 'file_prefix', 'files'])
 
 # Add any test models you want here!
 download_data = [
@@ -67,10 +67,10 @@ download_data = [
         }
     ),
     DownloadData(
-        directory='shapekey',
+        directory='shapekeys',
         file_prefix='shapekey.',
         files={
-            'shapekeytests': 'https://www.dropbox.com/s/jaxbrh3alnhcjo5/shapekey.ShapeKeyTestBlendSingleVert.blend?dl=1',
+            'shape_key_to_basis': 'https://www.dropbox.com/s/jaxbrh3alnhcjo5/shapekey.ShapeKeyTestBlendSingleVert.blend?dl=1',
         }
     ),
 ]
@@ -91,11 +91,12 @@ start_time = time.time()
 
 parser = OptionParser()
 parser.add_option('-b', '--blend', dest='blender_exec', help='sets the blender executable', metavar='BLENDER', default='blender')
-parser.add_option('-t', '--test', dest='globber_test', help='sets the unit to test', metavar='TEST', default='armatures/*')
-parser.add_option('-f', '--files', dest='globber_blend_files', help='sets the blend file(s) to test, relative to the \'tests\' directory', metavar='FILES', default='armatures/armature.*')
+parser.add_option('-t', '--test', dest='globber_test', help='sets the unit to test', metavar='TEST', default='./tests/armatures/*')
+parser.add_option('-f', '--files', dest='globber_blend_files', help='sets the blend file(s) to test, relative to the \'tests\' directory', metavar='FILES', default='./tests/armatures/armature.*')
 parser.add_option('-c', action="store_true", dest='ci', help='is travis running this test?', metavar='CI', default=False)
 parser.add_option('-v', action="store_true", dest='verbosity', help='verbosity unit tests', metavar='VERBOSE', default=False)
 parser.add_option('-e', action="store_true", dest='error_continue', help='continue running additional tests even if a test fails', metavar='ERROR_CONTINUE', default=False)
+# Useful for debugging
 parser.add_option('-p', action="store_true", dest='pipe_to_std', help='pipe all blender and test output directly to stdout and stderr instead of using custom filtering and output', metavar='PIPE_STD', default=False)
 
 (options, args) = parser.parse_args()
@@ -137,7 +138,7 @@ spinner = itertools.cycle(['-', '/', '|', '\\'])
 
 def exit_test():
     end_message = ' > '
-    if exit_code or (error_continue and error_code):
+    if exit_code != 0 or (error_continue != 0 and error_code != 0):
         end_message += 'Test ' + colored('FAILED', 'red', attrs=['bold'])
     else:
         end_message += 'Test ' + colored('PASSED', 'green', attrs=['bold'])
@@ -156,8 +157,8 @@ def print_output(raw, output):
 # iterate over each globber_blend_files.blend file relative to the 'tests' directory
 # then iterate over each globber_test.test.py file relative to the 'tests' directory
 # then open up blender with the current blend file and run the current test
-for blend_file in glob.glob('./tests/' + globber_blend_files + '.blend'):
-    for file in glob.glob('./tests/' + globber_test + '.test.py'):
+for blend_file in glob.glob(globber_blend_files + '.blend'):
+    for file in glob.glob(globber_test + '.test.py'):
         if os.path.basename(file) in scripts_only_executed_once:
             if os.path.basename(file) in scripts_executed:
                 continue  # skips already executed test
