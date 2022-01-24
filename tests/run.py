@@ -91,13 +91,15 @@ start_time = time.time()
 
 parser = OptionParser()
 parser.add_option('-b', '--blend', dest='blender_exec', help='sets the blender executable', metavar='BLENDER', default='blender')
-parser.add_option('-t', '--test', dest='globber_test', help='sets the unit to test', metavar='TEST', default='./tests/armatures/*')
-parser.add_option('-f', '--files', dest='globber_blend_files', help='sets the blend file(s) to test, relative to the \'tests\' directory', metavar='FILES', default='./tests/armatures/armature.*')
-parser.add_option('-c', action="store_true", dest='ci', help='is travis running this test?', metavar='CI', default=False)
-parser.add_option('-v', action="store_true", dest='verbosity', help='verbosity unit tests', metavar='VERBOSE', default=False)
-parser.add_option('-e', action="store_true", dest='error_continue', help='continue running additional tests even if a test fails', metavar='ERROR_CONTINUE', default=False)
+parser.add_option('-t', '--test', dest='globber_test', help='sets the unit to test, supports multiple files by unix style pathname pattern expansion. Automatically appended with ".test.py"', metavar='FILE_OR_PATTERN',
+                  default='./tests/armatures/*')
+parser.add_option('-f', '--bfile', dest='globber_blend_files', help='sets the blend file to test against, supports multiple files by unix style pathname pattern expansion. Automatically appended with ".blend"',
+                  metavar='FILE_OR_PATTERN', default='./tests/armatures/armature.*')
+parser.add_option('-c', action="store_true", dest='ci', help='is travis running this test?', default=False)
+parser.add_option('-v', action="store_true", dest='verbosity', help='verbosity unit tests', default=False)
+parser.add_option('-e', action="store_true", dest='error_continue', help='continue running additional tests even if a test fails', default=False)
 # Useful for debugging
-parser.add_option('-p', action="store_true", dest='pipe_to_std', help='pipe all blender and test output directly to stdout and stderr instead of using custom filtering and output', metavar='PIPE_STD', default=False)
+parser.add_option('-p', action="store_true", dest='pipe_to_std', help='pipe all blender and test output directly to stdout and stderr instead of using custom filtering and output', default=False)
 
 (options, args) = parser.parse_args()
 
