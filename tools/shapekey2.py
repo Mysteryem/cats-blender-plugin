@@ -257,8 +257,8 @@ class ShapeKeyApplier(bpy.types.Operator):
 
         # Store shape key vertex positions for new_basis
         # There's no need to initialise the elements to anything since they will all be overwritten
-        new_basis_co_flat = np.empty(flattened_co_length, dtype=float)
-        new_basis_relative_co_flat = np.empty(flattened_co_length, dtype=float)
+        new_basis_co_flat = np.empty(flattened_co_length, dtype=np.single)
+        new_basis_relative_co_flat = np.empty(flattened_co_length, dtype=np.single)
 
         new_basis_shapekey.data.foreach_get('co', new_basis_co_flat)
         new_basis_shapekey.relative_key.data.foreach_get('co', new_basis_relative_co_flat)
@@ -270,8 +270,8 @@ class ShapeKeyApplier(bpy.types.Operator):
         difference_co_flat_value_scaled = np.multiply(difference_co_flat, new_basis_shapekey.value)
 
         # We can reuse these arrays over and over instead of creating new ones each time
-        temp_co_array = np.empty(flattened_co_length, dtype=float)
-        temp_co_array2 = np.empty(flattened_co_length, dtype=float)
+        temp_co_array = np.empty(flattened_co_length, dtype=np.single)
+        temp_co_array2 = np.empty(flattened_co_length, dtype=np.single)
 
         # Scale the difference based on the vertex group of the active key
         #   Ideally, we would scale difference_co_flat by the weight of each vertex in new_basis_shapekey.vertex_group.
@@ -668,7 +668,7 @@ class ShapeKeyApplier(bpy.types.Operator):
                     # If we do get here, what this means is that we want to add the difference between shape_key_to_add and to_add_relative_key to only to_add_relative_key,
                     #   which is the same as setting to_add_relative_key to shape_key_to_add, so we'll do just that, albeit manually, since it should be faster
                     # Create an empty array for storing the flattened 'co' vectors
-                    shape_key_to_add_co = np.empty(len(shape_key_to_add.data * 3), dtype=float)
+                    shape_key_to_add_co = np.empty(len(shape_key_to_add.data * 3), dtype=np.single)
                     # Fill the array with the flattened 'co' vectors of shape_key_to_add
                     shape_key_to_add.data.foreach_get('co', shape_key_to_add_co)
                     # Set to_add_relative_key's 'co' vectors from the array
