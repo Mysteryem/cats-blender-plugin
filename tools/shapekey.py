@@ -341,6 +341,14 @@ class ShapeKeyApplier(bpy.types.Operator):
                 key_block.data.foreach_get('co', temp_co_array)
                 key_block.data.foreach_set('co', np.add(temp_co_array, difference_co_flat_scaled, out=temp_co_array))
 
+            # Shorthand key:
+            # NB = new_basis_shapekey
+            # NB.r = new_basis_shapekey.relative_key
+            # r(NB) = reverted(new_basis_shapekey)
+            # r(NB).r = reverted(new_basis_shapekey).relative_key
+            # NB.v = new_basis_shapekey.value
+            # NB.vg = new_basis_shapekey.vertex_group
+            #
             # We need the difference between r(NB) and r(NB).r to be the negative of
             #   (r(NB) - r(NB).r) * NB.vg = -((NB - NB.r) * NB.v * NB.vg)
             #                             = -(NB - NB.r) * NB.v * NB.vg
