@@ -146,7 +146,7 @@ def exit_test():
         end_message += 'Test ' + colored('PASSED', 'green', attrs=['bold'])
     end_message += ' in ' + str(round((time.time() - start_time))) + ' seconds'
     print(end_message)
-    sys.exit(exit_code if error_code else error_code)
+    sys.exit(error_code if error_code != 0 else exit_code)
 
 
 def print_output(raw, output):
