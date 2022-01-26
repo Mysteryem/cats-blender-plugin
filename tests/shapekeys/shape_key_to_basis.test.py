@@ -108,8 +108,8 @@ class TestAddon(unittest.TestCase):
     #     Key 4 becomes Key 4 + (Key 1 - Basis) = [1,1,1]
     #     Key 5 remains as [0,0,0]
     #     Key 6 remains as [0,0,0]
-    def immediately_relative_to_basis(self, object_name):
-        obj = self.set_active_by_name(object_name)
+    def test_immediately_relative_to_basis(self):
+        obj = self.set_active_by_name('06_ImmediatelyRelative')
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Key 1')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis', 'Key 2', 'Key 3', 'Key 4', 'Key 5', 'Key 6')
 
@@ -118,16 +118,6 @@ class TestAddon(unittest.TestCase):
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Basis', 'Key 2', 'Key 4')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Key 1 - Reverted', 'Key 5', 'Key 6')
         self.assertShapeKeysEqual(obj, [-1, -1, -1], 'Key 3')
-        return obj
-
-    def test_immediately_relative_to_basis_individual(self):
-        self.immediately_relative_to_basis('06A_ImmediatelyRelative_Individual')
-
-    # 10 extra shape keys all relative to the Basis to ensure the functions that are faster with many shape keys are used
-    def test_immediately_relative_to_basis_multi(self):
-        obj = self.immediately_relative_to_basis('06B_ImmediatelyRelative_Multi')
-        # Keys 7 to 16 should all be [1,1,1]
-        self.assertShapeKeysEqual(obj, [1, 1, 1], *['Key ' + str(i) for i in range(7, 17)])
 
     # The active shape (Key 1 [1,1,1]) is relative to Key 2 [0,0,0]
     # Basis is [0,0,0]
@@ -146,8 +136,8 @@ class TestAddon(unittest.TestCase):
     #     Key 5 becomes Key 5 + (Key 1 - Key 2) = [1,1,1]
     #     Key 6 remains as [0,0,0]
     #     Key 7 remains as [0,0,0]
-    def recursively_relative_to_basis(self, object_name):
-        obj = self.set_active_by_name(object_name)
+    def test_recursively_relative_to_basis(self):
+        obj = self.set_active_by_name('07_RecursivelyRelative')
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Key 1')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis', 'Key 2', 'Key 3', 'Key 4', 'Key 5', 'Key 6', 'Key 7')
 
@@ -156,17 +146,6 @@ class TestAddon(unittest.TestCase):
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Basis', 'Key 2', 'Key 3', 'Key 5')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Key 1 - Reverted', 'Key 6', 'Key 7')
         self.assertShapeKeysEqual(obj, [-1, -1, -1], 'Key 4')
-
-        return obj
-
-    def test_recursively_relative_to_basis_individual(self):
-        self.recursively_relative_to_basis('07A_RecursivelyRelative_Individual')
-
-    # 10 extra shape keys all relative to the Basis to ensure the functions that are faster with many shape keys are used
-    def test_recursively_relative_to_basis_multi(self):
-        obj = self.recursively_relative_to_basis('07B_RecursivelyRelative_Multi')
-        # Keys 8 to 17 should all be [1,1,1]
-        self.assertShapeKeysEqual(obj, [1, 1, 1], *['Key ' + str(i) for i in range(8, 18)])
 
     # The active shape (Key 2 [1,1,1]) isn't recursively relative to the basis and is instead relative to Key 1 [0,0,0]
     # Basis is [0,0,0]
@@ -187,8 +166,8 @@ class TestAddon(unittest.TestCase):
     #     Key 6 becomes Key 6 - (Key 2 - Key 1) - (Key 2 - Key 1) = [-2,-2,-2]
     #     Key 7 remains as [0,0,0]
     #     Key 8 remains as [0,0,0]
-    def separate_from_basis(self, object_name):
-        obj = self.set_active_by_name(object_name)
+    def test_separate_from_basis(self):
+        obj = self.set_active_by_name('08_Separate')
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Key 2')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis', 'Key 1', 'Key 3', 'Key 4', 'Key 5', 'Key 6', 'Key 7', 'Key 8')
 
@@ -199,17 +178,6 @@ class TestAddon(unittest.TestCase):
         self.assertShapeKeysEqual(obj, [-1, -1, -1], 'Key 2 - Reverted')
         self.assertShapeKeysEqual(obj, [-2, -2, -2], 'Key 6')
 
-        return obj
-
-    def test_separate_from_basis_individual(self):
-        self.separate_from_basis('08A_Separate_Individual')
-
-    # 10 extra shape keys all relative to the Basis to ensure the functions that are faster with many shape keys are used
-    def test_separate_from_basis_multi(self):
-        obj = self.separate_from_basis('08B_Separate_Multi')
-        # Keys 9 to 18 should all be [1,1,1]
-        self.assertShapeKeysEqual(obj, [1, 1, 1], *['Key ' + str(i) for i in range(9, 19)])
-
     # The active shape key (Key 1 [1,1,1]) is relative to the Basis and the Basis is mistakenly relative to Key 1
     #     Despite the fact that would normally be cancelled due to an infinite loop, the Basis instead gets treated as
     #     if it's always relative to itself and the operator succeeds
@@ -218,8 +186,8 @@ class TestAddon(unittest.TestCase):
     #     When applied,
     #         Basis becomes Basis + (Key 1 - Basis) = [1,1,1]
     #         Key 1 becomes Key 1 - (Key 1 - Basis) = [0,0,0]
-    def basis_relative_loop_special_case(self, object_name):
-        obj = self.set_active_by_name(object_name)
+    def test_basis_relative_loop_special_case_(self):
+        obj = self.set_active_by_name('09_BasisLoopSpecial')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis')
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Key 1')
         self.assertShapeKeysRelativeTo(obj, 'Basis', 'Key 1')
@@ -232,25 +200,14 @@ class TestAddon(unittest.TestCase):
         self.assertShapeKeysRelativeTo(obj, 'Basis', 'Key 1 - Reverted')
         self.assertShapeKeysRelativeTo(obj, 'Key 1 - Reverted', 'Basis')
 
-        return obj
-
-    def test_basis_relative_loop_special_case_individual(self):
-        self.basis_relative_loop_special_case('09A_BasisLoopSpecial_Individual')
-
-    # 10 extra shape keys all relative to the Basis to ensure the functions that are faster with many shape keys are used
-    def test_basis_relative_loop_special_case_multi(self):
-        obj = self.basis_relative_loop_special_case('09B_BasisLoopSpecial_Multi')
-        # Keys 2 to 11 should all be [1,1,1]
-        self.assertShapeKeysEqual(obj, [1, 1, 1], *['Key ' + str(i) for i in range(2, 12)])
-
     # The active shape key (Key 1 [1,1,1]) is relative to the Basis and the value of the active shape key is 0.25
     #     Basis is [0,0,0]
     #     Key 1 is [1,1,1] and is relative to Basis
     #     When applied,
     #         Basis becomes Basis + (Key 1 - Basis) * 0.25 = [0.25,0.25,0.25]
     #         Key 1 becomes Key 1 - (Key 1 - Basis) = [0,0,0]
-    def non_zero_value(self, object_name):
-        obj = self.set_active_by_name(object_name)
+    def test_non_zero_value(self):
+        obj = self.set_active_by_name('10_Value')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis')
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Key 1')
         self.assertShapeKeyValueEquals(obj, 0.25, 'Key 1')
@@ -260,17 +217,6 @@ class TestAddon(unittest.TestCase):
         self.assertShapeKeysEqual(obj, [0.25, 0.25, 0.25], 'Basis')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Key 1 - Reverted')
 
-        return obj
-
-    def test_non_zero_value_individual(self):
-        self.non_zero_value('10A_Value_Individual')
-
-    # 10 extra shape keys all relative to the Basis to ensure the functions that are faster with many shape keys are used
-    def test_non_zero_value_multi(self):
-        obj = self.non_zero_value('10B_Value_Multi')
-        # Keys 2 to 11 should all be [0.25,0.25,0.25]
-        self.assertShapeKeysEqual(obj, [0.25, 0.25, 0.25], *['Key ' + str(i) for i in range(2, 12)])
-
     # The active shape key (Key 1 [1,1,1]) is relative to the Basis and has a vertex group with the single vertex of the mesh with value 0.25
     #     Basis is [0,0,0]
     #     Key 1 is [1,1,1] and is relative to Basis
@@ -278,8 +224,8 @@ class TestAddon(unittest.TestCase):
     #         Basis becomes Basis + (Key 1 - Basis) * 0.25 = [0.25,0.25,0.25]
     #         Key 1 becomes Key 1 - (Key 1 - Basis) + (Key 1 - Basis) * 0.25 - (Key 1 - Basis)
     #                     = Key 1 - (Key 1 - Basis) * 1.75 = [-0.75,-0.75,-0.75]
-    def vertex_group(self, object_name):
-        obj = self.set_active_by_name(object_name)
+    def test_vertex_group(self):
+        obj = self.set_active_by_name('11_VertexGroup')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis')
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Key 1')
         self.assertShapeKeyVertexGroupNameEquals(obj, 'Group', 'Key 1')
@@ -290,17 +236,6 @@ class TestAddon(unittest.TestCase):
         self.assertShapeKeysEqual(obj, [-0.75, -0.75, -0.75], 'Key 1 - Reverted')
         self.assertShapeKeyVertexGroupNameEquals(obj, 'Group', 'Key 1 - Reverted')
 
-        return obj
-
-    def test_vertex_group_individual(self):
-        self.vertex_group('11A_VertexGroup_Individual')
-
-    # 10 extra shape keys all relative to the Basis to ensure the functions that are faster with many shape keys are used
-    def test_vertex_group_multi(self):
-        obj = self.vertex_group('11B_VertexGroup_Multi')
-        # Keys 2 to 11 should all be [0.25,0.25,0.25]
-        self.assertShapeKeysEqual(obj, [0.25, 0.25, 0.25], *['Key ' + str(i) for i in range(2, 12)])
-
     # The active shape key (Key 1 [1,1,1]) is relative to the Basis and has a value of 0.25 and a vertex group with the single vertex of the mesh with value 0.25
     #     Basis is [0,0,0]
     #     Key 1 is [1,1,1] and is relative to Basis
@@ -309,8 +244,8 @@ class TestAddon(unittest.TestCase):
     #         Key 1 becomes Key 1 - (Key 1 - Basis) + (Key 1 - Basis) * 0.25 * 0.25 - (Key 1 - Basis) * 0.25
     #                     = Key 1 - (Key 1 - Basis) * (1 - 0.0625 + 0.25)
     #                     = Key 1 - (Key 1 - Basis) * (1.1875) = [-0.1875,-0.1875,-0.1875]
-    def non_zero_value_and_vertex_group(self, object_name):
-        obj = self.set_active_by_name(object_name)
+    def test_non_zero_value_and_vertex_group(self):
+        obj = self.set_active_by_name('12_ValueAndVertexGroup')
         self.assertShapeKeysEqual(obj, [0, 0, 0], 'Basis')
         self.assertShapeKeysEqual(obj, [1, 1, 1], 'Key 1')
         self.assertShapeKeyValueEquals(obj, 0.25, 'Key 1')
@@ -321,17 +256,6 @@ class TestAddon(unittest.TestCase):
         self.assertShapeKeysEqual(obj, [0.0625, 0.0625, 0.0625], 'Basis')
         self.assertShapeKeysEqual(obj, [-0.1875, -0.1875, -0.1875], 'Key 1 - Reverted')
         self.assertShapeKeyVertexGroupNameEquals(obj, 'Group', 'Key 1 - Reverted')
-
-        return obj
-
-    def test_non_zero_value_and_vertex_group_individual(self):
-        self.non_zero_value_and_vertex_group('12A_ValueAndVertexGroup_Individual')
-
-    # 10 extra shape keys all relative to the Basis to ensure the functions that are faster with many shape keys are used
-    def test_non_zero_value_and_vertex_group_multi(self):
-        obj = self.non_zero_value_and_vertex_group('12B_ValueAndVertexGroup_Multi')
-        # Keys 2 to 11 should all be [0.0625,0.0625,0.0625]
-        self.assertShapeKeysEqual(obj, [0.0625, 0.0625, 0.0625], *['Key ' + str(i) for i in range(2, 12)])
 
 
 suite = unittest.defaultTestLoader.loadTestsFromTestCase(TestAddon)

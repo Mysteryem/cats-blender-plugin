@@ -70,7 +70,7 @@ download_data = [
         directory='shapekeys',
         file_prefix='shapekey.',
         files={
-            'shape_key_to_basis': 'https://www.dropbox.com/s/jaxbrh3alnhcjo5/shapekey.ShapeKeyTestBlendSingleVert.blend?dl=1',
+            'shape_key_to_basis': 'https://www.dropbox.com/s/d0efnrkauq596ng/ApplyShapeToBasisTest.blend?dl=1',
         }
     ),
 ]
