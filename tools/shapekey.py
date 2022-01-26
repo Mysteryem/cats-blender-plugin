@@ -92,29 +92,15 @@ class ShapeKeyApplier(bpy.types.Operator):
         # On the off chance that old_basis_shapekey is not relative to itself, ReverseRelativeMap(mesh) has special handling that treats it as if it always is
         old_basis_shapekey = mesh.data.shape_keys.key_blocks[0]
 
-        # old_basis_shapekey will only be included if it's relative to itself or if it's the first shape key
+        # old_basis_shapekey will be included if it's relative to itself or if it's the first shape key,
+        # so it's always included in this case
         keys_relative_recursive_to_old_basis = reverse_relative_map.get_relative_recursive_keys(old_basis_shapekey)
 
         # 0.0 would have no effect, so set to 1.0
         if new_basis_shapekey.value == 0.0:
             new_basis_shapekey.value = 1.0
 
-        # Most meshes this will be used on are assumed to have more than ~600 vertices (and for small meshes, both options are very fast anyway)
-        # From benchmark data, it is generally a good idea to pick individual_add when there are 10 or fewer shape keys to be affected
-        # and multi_add the rest of the time
-        use_multi_add = len(keys_relative_recursive_to_old_basis | keys_relative_recursive_to_new_basis | {new_basis_shapekey}) > 10
-
-        if use_multi_add:
-            # Optimised for a large number of affected shape keys by using the blend_from_shape operator twice, regardless of how many shape keys there are
-            # As blend_from_shape is an edit mode operator, it requires some extra work to set the mesh up so that all the vertices are selected
-            # and visible and some extra work to restore the vertex/edge/face selection/visibility afterwards.
-            ShapeKeyApplier.multi_add(mesh=mesh,
-                                      new_basis_shapekey=new_basis_shapekey,
-                                      keys_relative_recursive_to_new_basis=keys_relative_recursive_to_new_basis,
-                                      old_basis_shapekey=old_basis_shapekey,
-                                      keys_relative_recursive_to_basis=keys_relative_recursive_to_old_basis)
-        else:
-            ShapeKeyApplier.individual_add(mesh=mesh,
+        ShapeKeyApplier.apply_key_to_basis(mesh=mesh,
                                            new_basis_shapekey=new_basis_shapekey,
                                            keys_relative_recursive_to_new_basis=keys_relative_recursive_to_new_basis,
                                            keys_relative_recursive_to_basis=keys_relative_recursive_to_old_basis)
@@ -231,12 +217,11 @@ class ShapeKeyApplier(bpy.types.Operator):
 
     # Figures out what needs to be added to each affected key, then iterates through all the affected keys, getting the current shape,
     # adding the corresponding amount to it and then setting that as the new shape.
-    # This is very fast when the number of vertices is very small or there are only a few shape keys.
-    # This avoids EDIT mode entirely, instead getting and setting shape key positions manually with foreach_get and foreach_set
-    # By far the slowest part of this function when the number of vertices increase are the shape_key.data.foreach_set()
-    # and shape_key.data.foreach_get() calls, so the number of calls of those should be minimised for performance
+    # Gets and sets shape key positions manually with foreach_get and foreach_set
+    # The slowest part of this function when the number of vertices increase are the shape_key.data.foreach_set() and
+    # shape_key.data.foreach_get() calls, so the number of calls of those should be minimised for performance
     @staticmethod
-    def individual_add(*, mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, keys_relative_recursive_to_basis):
+    def apply_key_to_basis(*, mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, keys_relative_recursive_to_basis):
         data = mesh.data
         num_verts = len(data.vertices)
 
@@ -253,6 +238,12 @@ class ShapeKeyApplier(bpy.types.Operator):
 
         # Store shape key vertex positions for new_basis
         # There's no need to initialise the elements to anything since they will all be overwritten
+        # The ShapeKeyPoint type's 'co' property is a FloatProperty type, these are single precision floats
+        # It's extremely important for performance that the correct float type (np.single/np.float32) is used
+        # Using the wrong type could result in 3-5 times slower performance (depending on array length) due to Blender
+        # being required to iterate through each element in the data first instead of immediately setting/getting all
+        # the data directly
+        # See foreach_getset in bpy.rna.c of the Blender source for the implementation
         new_basis_co_flat = np.empty(flattened_co_length, dtype=np.single)
         new_basis_relative_co_flat = np.empty(flattened_co_length, dtype=np.single)
 
@@ -273,7 +264,8 @@ class ShapeKeyApplier(bpy.types.Operator):
         #   Ideally, we would scale difference_co_flat by the weight of each vertex in new_basis_shapekey.vertex_group.
         #   Unfortunately, Blender has no efficient way to get all the weights for a particular vertex group, so it's
         #   pretty much always a few times faster to create a new shape from mix and get its 'co' with foreach_get(...)
-        #   Tiny meshes, think <1000 vertices, are the exception.
+        #   https://developer.blender.org/D6227 has the sort of function we're after, which could make it into Blender
+        #   one day.
         #
         #   For reference, the ways to get all vertex weights that you can find on stackoverflow:
         #       Weights from vertices:
@@ -293,7 +285,7 @@ class ShapeKeyApplier(bpy.types.Operator):
         #       Weights from vertex group:
         #           This doesn't scale poorly with lots of vertex groups like the other way does, but, if most of the vertices aren't in the vertex group, relying on catching
         #           the exception is really slow. If Blender had a similar method that returned a default value or even just None instead of throwing an exception, this would
-        #           be much faster, though maybe still a little slower than creating a new key from mix.
+        #           be much faster, though likely still slower than creating a new key from mix.
         #           Ideally we'd want a fast access method like foreach_get(...) instead of having to iterate through all the vertices individually
         #               vertex_weights = []
         #               for i in range(num_verts):
@@ -373,7 +365,7 @@ class ShapeKeyApplier(bpy.types.Operator):
             #   Which we can either factor to
             #       X = (NB - NB.r)(-1 - NB.v) + difference_co_flat_scaled
             #       X = difference_co_flat * (-1 - NB.v) + difference_co_flat_scaled
-            #   Or, as NB - NB.r = difference_co_flat, calculate as, which may be faster since it only uses addition/subtraction
+            #   Or, as NB - NB.r = difference_co_flat, calculate as
             #       X = -difference_co_flat + difference_co_flat_scaled - difference_co_flat_value_scaled
             #
             # The numpy functions take close to a negligible amount of the total function time, so the choice isn't very
@@ -381,7 +373,7 @@ class ShapeKeyApplier(bpy.types.Operator):
             # slightly better than np.add(array1, array2, out=output_array) once array1 gets to around 9000 elements or
             # more
             # I guess this is due to the fact that the add operation needs to do 1 extra array access per element, and
-            # that eventually this surpasses the effect of the multiply operation being more expensive than the add
+            # that eventually surpasses the effect of the multiply operation being more expensive than the add
             # operation
             # In this case, the array length is 3*num_verts, meaning the multiplication option gets better at around
             # 3000 vertices. We'll use the multiplication option
@@ -466,272 +458,6 @@ class ShapeKeyApplier(bpy.types.Operator):
             for key_block in keys_relative_recursive_to_new_basis:
                 key_block.data.foreach_get('co', temp_co_array)
                 key_block.data.foreach_set('co', np.add(temp_co_array, temp_co_array2, out=temp_co_array))
-
-    # To use the blend_from_shape modifier, all the vertices need to be visible and selected in order to affect them all (faces and edges don't matter)
-    # use_shape_key_edit_mode needs to be disabled because if enabled it could be slow if other shape keys are active and if the active shape key does not have
-    # a value of 1.0, it will affect how blend_from_shape gets applied, e.g., if the value is 0.0, the blend_from_shape modifier will do nothing.
-    # For large meshes, a considerable amount of time is spent getting the 'hide' and 'select' values as well as restoring them again later
-    # Choosing not to maintain hide/select state will result in a performance increase
-    class BlendFromShapeEditModeHelper:
-        is_set_up = False
-
-        def __init__(self, mesh):
-            self.mesh = mesh
-
-        def __store(self):
-            if not self.is_set_up:
-                data = self.mesh.data
-                num_verts = len(data.vertices)
-                num_edges = len(data.edges)
-                num_polygons = len(data.polygons)
-
-                # Store current hide values so they can be restored later
-                self.vertex_hide_values = np.empty(num_verts, dtype=bool)
-                self.edge_hide_values = np.empty(num_edges, dtype=bool)
-                self.polygon_hide_values = np.empty(num_polygons, dtype=bool)
-                data.vertices.foreach_get('hide', self.vertex_hide_values)
-                data.edges.foreach_get('hide', self.edge_hide_values)
-                data.polygons.foreach_get('hide', self.polygon_hide_values)
-
-                # Store current select values so they can be restored later
-                self.vertex_select_values = np.empty(num_verts, dtype=bool)
-                self.edge_select_values = np.empty(num_edges, dtype=bool)
-                self.polygon_select_values = np.empty(num_polygons, dtype=bool)
-                data.vertices.foreach_get('select', self.vertex_select_values)
-                data.edges.foreach_get('select', self.edge_select_values)
-                data.polygons.foreach_get('select', self.polygon_select_values)
-
-                # Store the current shape key edit mode setting
-                self.use_shape_key_edit_mode = self.mesh.use_shape_key_edit_mode
-
-        def pre_edit_mode_setup(self):
-            if not self.is_set_up:
-                self.__store()
-
-                data = self.mesh.data
-
-                # Turn off use_shape_key_edit_mode
-                self.mesh.use_shape_key_edit_mode = False
-                # For large meshes, these get slower, but are still faster than revealing and selecting the whole mesh while in edit mode using the corresponding operators,
-                #   particularly the unhiding
-                num_verts = len(data.vertices)
-                data.vertices.foreach_set('hide', np.full(num_verts, False, dtype=bool))
-                data.vertices.foreach_set('select', np.full(num_verts, True, dtype=bool))
-
-                self.is_set_up = True
-
-        def restore(self):
-            if self.is_set_up:
-                data = self.mesh.data
-
-                # Restore use_shape_key_edit_mode
-                self.mesh.use_shape_key_edit_mode = self.use_shape_key_edit_mode
-
-                # Restore hide attributes
-                data.vertices.foreach_set('hide', self.vertex_hide_values)
-                data.edges.foreach_set('hide', self.edge_hide_values)
-                data.polygons.foreach_set('hide', self.polygon_hide_values)
-
-                # Restore select attributes
-                data.vertices.foreach_set('select', self.vertex_select_values)
-                data.edges.foreach_set('select', self.edge_select_values)
-                data.polygons.foreach_set('select', self.polygon_select_values)
-
-                self.is_set_up = False
-
-    @staticmethod
-    def multi_add(*, mesh, new_basis_shapekey, keys_relative_recursive_to_new_basis, old_basis_shapekey, keys_relative_recursive_to_basis):
-        # Need to isolate the active shape key, so that when a new shape is created from mix, it's only the active shape key
-        isolate_active_restore_function = ShapeKeyApplier.isolate_active_shape(mesh)
-
-        # First, apply new_basis_shapekey multiplied by its value and its vertex group to all shape keys immediately or recursively relative to the target_basis
-        #   This is effectively applying the active shape key with its current value and vertex group to the basis
-        #   To do this, we mute all shape keys but the active one (already done) and create a temporary new shape from mix
-        #   This temporary shape will be applied to the target_basis and all shape keys immediately or recursively relative to the target_basis
-        #
-        #   new_shape_from_mix() -> temp_shape
-        #     # true_basis is the first shape key
-        #     temp_shape - true_basis = (NB - NB.r) * NB.v * NB.vg
-        temp_shape = mesh.shape_key_add(name="temp shape (you shouldn't see this)", from_mix=True)
-
-        # Restore whatever got changed in order to isolate the active shape key
-        isolate_active_restore_function()
-
-        # fast_multi_shape_add_key changes the active shape key and shape key removal sets the active shape key index to 0
-        # We'll want to restore the active shape key when we're done
-        new_basis_shapekey_index = mesh.active_shape_key_index
-
-        # fast_multi_shape_add_key uses the blend_from_shape modifier, which means we need to make sure edit mode
-        # is set up such that all vertices get fully affected when blend_from_shape is used
-        # This helper will perform the required setup when needed and can be used afterwards to restore what got changed
-        blend_from_shape_edit_mode_helper = ShapeKeyApplier.BlendFromShapeEditModeHelper(mesh)
-
-        #   add(temp_shape, value=1) to shapes in r_relative(target_basis) | {target_basis}
-        ShapeKeyApplier.__multi_add_internal(shape_key_to_add=temp_shape,
-                                             shapes_to_affect=keys_relative_recursive_to_basis | {old_basis_shapekey},
-                                             mesh=mesh,
-                                             edit_mode_helper=blend_from_shape_edit_mode_helper)
-
-        # Remove the temporary key
-        mesh.shape_key_remove(temp_shape)
-
-        # Second, apply new_basis_shapekey to itself such that when it's applied a second time, it reverts its initial application
-        #   For this, all keys immediately or recursively relative to new_basis_shapekey will need to be affected by the same amount
-        #   The reverted(new_basis) * new_basis.vertex_group needs to equal the negative of the new_basis * new_basis.value * new_basis.vertex_group
-        #   Shorthand key:
-        #       NB: new_basis
-        #     r(x): reverted shape of shape x
-        #      x.r: relative_key of shape x
-        #      x.v: value of shape x
-        #     x.vg: vertex group of shape x, if there is no vertex group, x.vg = 1, though it doesn't actually matter since the vertex group cancels out
-        #     (r(NB) - r(NB).r) * NB.vg = -(NB - NB.r) * NB.v * NB.vg
-        #   NB.vg cancels
-        #     (r(NB) - r(NB).r) = -(NB - NB.r) * NB.v
-        #     r(NB) - r(NB).r = -(NB - NB.r) * NB.v
-        #   Note that since NB.r isn't immediately relative or recursively relative to NB, it won't be affected, so r(NB).r = NB.r
-        #     r(NB) - NB.r = -(NB - NB.r) * NB.v
-        #   Note that r(NB) = X + NB where X is what we need to find to add
-        #     X + NB - NB.r = -(NB - NB.r) * NB.v
-        #   Rearrange
-        #     X + (NB - NB.r) = -(NB - NB.r) * NB.v
-        #   Isolate X
-        #     X = -(NB - NB.r) - (NB - NB.r) * NB.v
-        #   Factorize out (NB - NB.r)
-        #     X = (NB - NB.r) * (-1 - NB.v)
-        #   Note that new_basis_shapekey = (NB - NB.r)
-        #     X = new_basis_shapekey * (-1 - NB.v)
-        #
-        #   add(NB, value=-1 - NB.v) to shapes in r_relative(NB) | {NB}
-        ShapeKeyApplier.__multi_add_internal(shape_key_to_add=new_basis_shapekey,
-                                             shapes_to_affect=keys_relative_recursive_to_new_basis | {new_basis_shapekey},
-                                             mesh=mesh,
-                                             value=-1 - new_basis_shapekey.value,
-                                             edit_mode_helper=blend_from_shape_edit_mode_helper)
-
-        # Restore vert/edge/face hide and select status, and use_shape_key_edit_mode
-        blend_from_shape_edit_mode_helper.restore()
-
-        # Restore the active shape key index
-        mesh.active_shape_key_index = new_basis_shapekey_index
-
-    @staticmethod
-    def __multi_add_internal(*, shape_key_to_add, shapes_to_affect, mesh, value=1.0, edit_mode_helper):
-        to_add_relative_key = shape_key_to_add.relative_key
-
-        if shapes_to_affect and value != 0.0 and to_add_relative_key != shape_key_to_add:
-
-            # Make sure it's a set
-            shapes_to_affect = set(shapes_to_affect)
-
-            # Out of all the shapes_to_affect, we need to pick one of them that all the shapes_to_affect will temporarily
-            # have their relative keys set to. This will also be the shape key that gets used as the active shape key when
-            # entering edit mode.
-            # It's important that shape_key_to_add's relative key remains the same since the difference between those
-            # two keys are what will be added in edit mode
-            if shape_key_to_add in shapes_to_affect:
-                if to_add_relative_key in shapes_to_affect:
-                    # Both shape_key_to_add and to_add_relative_key are to be affected,
-                    # make sure to_add_relative_key is picked as the temporary basis,
-                    # that way shape_key_to_add's relative_key remains as to_add_relative_key
-                    temporary_affected_basis = to_add_relative_key
-                else:
-                    # shape_key_to_add is to be affected, but to_add_relative_key isn't, make sure shape_key_to_add is picked
-                    # as the temporary basis. We will restore shape_key_to_add's relative_key afterwards.
-                    # Other keys cannot be picked as blend_from_shape will only affect the active shape key and all
-                    # shape keys immediately relative to that active shape key.
-                    # If we were to pick other_key as the temporary_affected_basis, the only way shape_key_to_add could
-                    # get affected is if shape_key_to_add.relative_key == other_key, but then shape_key_to_add's relative
-                    # key is no longer to_add_relative_key, so the blend_from_shape will blend the wrong amount
-                    temporary_affected_basis = shape_key_to_add
-            elif to_add_relative_key in shapes_to_affect:
-                # If to_add_relative_key is in the set and shape_key_to_add is not:
-                #   If we were to pick to_add_relative_key as temporary_affected_basis and blend shape_key_to_add into it:
-                #     Since shape_key_to_add is relative to to_add_relative_key (and must remain as such as what we're adding
-                #     is the difference between shape_key_to_add and to_add_relative_key), shape_key_to_add will also get updated.
-                #
-                #   If there are other shape keys to pick from, and we pick one of those, to_add_relative_key will get updated due to its temporary relative_key being updated
-                #   but this update will not propagate to shape_key_to_add. shape_key_to_add will remain unchanged (though the difference between shape_key_to_add and
-                #   to_add_relative_key will change)
-                #
-                #   Technically, if shape_key_to_add is a temporary key, we don't care if it gets modified even though it was in shapes_to_affect, but it would result
-                #   in 1 more shape being affected than is necessary, which would be a little slower, particularly for large meshes
-                #
-                # Set the temporary_affected_basis as the first shape that isn't to_add_relative_key
-                # The worst case is two iterations, where the first iteration was to_add_relative_key, but that the condition rejects
-                # If there's only one element, then we'll have to use to_add_relative_key
-                temporary_affected_basis = next((x for x in shapes_to_affect if x is not to_add_relative_key), to_add_relative_key)
-
-                if temporary_affected_basis is to_add_relative_key:
-                    # Generally, there shouldn't be only one element in shapes_to_affect since this function is designed for when there are multiple elements,
-                    # so this condition shouldn't ever be true if the function is being used correctly
-                    # If we do get here, what this means is that we want to add the difference between shape_key_to_add and to_add_relative_key to only to_add_relative_key,
-                    #   which is the same as setting to_add_relative_key to shape_key_to_add, so we'll do just that, albeit manually, since it should be faster
-                    # Create an empty array for storing the flattened 'co' vectors
-                    shape_key_to_add_co = np.empty(len(shape_key_to_add.data * 3), dtype=np.single)
-                    # Fill the array with the flattened 'co' vectors of shape_key_to_add
-                    shape_key_to_add.data.foreach_get('co', shape_key_to_add_co)
-                    # Set to_add_relative_key's 'co' vectors from the array
-                    to_add_relative_key.data.foreach_set('co', shape_key_to_add_co)
-                    # There's nothing more to do, so return
-                    return
-            else:
-                # it doesn't matter which element it is, so get the first element by iterator since it's a set
-                temporary_affected_basis = next(iter(shapes_to_affect))
-
-            data = mesh.data
-            all_shapes = data.shape_keys.key_blocks
-            unaffected_shapes = set(all_shapes) - shapes_to_affect
-
-            # If any of the shapes in unaffected_shapes are relative to temporary_affected_basis, they would get modified, but we don't want that
-            # Pick any shape in unaffected_shapes and set that as the relative_key of all the unaffected_shapes, this will ensure the shapes are unaffected
-            # We will need to restore their relative keys once we're done, so we'll put them into a list
-            unaffected_relative_keys = []
-            if unaffected_shapes:
-                # unaffected_shapes is a set, so we'll use the first value from its iterator
-                temporary_unaffected_basis = next(iter(unaffected_shapes))
-                for shape in unaffected_shapes:
-                    unaffected_relative_keys.append((shape, shape.relative_key))
-                    shape.relative_key = temporary_unaffected_basis
-
-            # Set temporary_affected_basis as the relative_key of all the shapes_to_affect
-            # We will need to restore their relative keys once we're done, so we'll put them into a list
-            affected_relative_keys = []
-            for shape in shapes_to_affect:
-                affected_relative_keys.append((shape, shape.relative_key))
-                shape.relative_key = temporary_affected_basis
-
-            # shape_key_to_add may have just had its relative_key changed, but it must not be changed, otherwise what's being added will be changed
-            # We have already accounted for this by picking temporary_affected_basis carefully, so it is safe to restore the relative_key
-            # An alternative to setting the relative key back would be to check if the iterated element is not shape_key_to_add when iterating
-            #   unaffected_shapes or shapes_to_affect so that shape_key_to_add.relative_key never gets changed in the first place
-            shape_key_to_add.relative_key = to_add_relative_key
-
-            # Make temporary_affected_basis the active shape key
-            # It's important to do this in 'OBJECT' mode, since changing active shape key in 'EDIT' mode is slow for large meshes
-            mesh.active_shape_key_index = data.shape_keys.key_blocks.find(temporary_affected_basis.name)
-
-            # Make sure edit mode is set up correctly for using blend from shape
-            edit_mode_helper.pre_edit_mode_setup()
-
-            # Blend from shape is an edit mode operator so the mode needs to be changed to 'EDIT'
-            # Note that for meshes with a large number of vertices, going into edit mode from object mode is slow
-            bpy.ops.object.mode_set(mode='EDIT')
-
-            # Additively blend our prepared shape into temporary_affected_basis, affecting temporary_affected_basis and all keys immediately relative to it
-            # add=True will blend in the difference from temp_shape and temp_shape.relative_key
-            bpy.ops.mesh.blend_from_shape(shape=shape_key_to_add.name, blend=value, add=True)
-
-            # Exiting out of object mode (or changing the active shape key) will cause all shape keys with relative_key equal to temporary_affected_basis to be updated too
-            # The relative keys cannot be restored before doing this, otherwise the wrong shape keys will be updated
-            bpy.ops.object.mode_set(mode='OBJECT')
-
-            # Restore the relative keys of the unaffected shapes
-            for shape, relative in unaffected_relative_keys:
-                shape.relative_key = relative
-
-            # Restore the relative keys of the affected shapes
-            for shape, relative in affected_relative_keys:
-                shape.relative_key = relative
 
 
 def addToShapekeyMenu(self, context):
