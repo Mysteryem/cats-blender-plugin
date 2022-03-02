@@ -189,85 +189,119 @@ class AutoDecimateButton(bpy.types.Operator):
 
         return {'FINISHED'}
 
-    def get_animation_weighting(self, context, mesh):
+    @staticmethod
+    def get_animation_weighting(mesh):
+        # TODO: Only check pose bones
         # Weight by multiplied bone weights for every pair of bones.
-        # This is O(n*m^2) for n verts and m bones, generally runs relatively quickly.
-        weights = dict()
-        for vertex in mesh.data.vertices:
-            v_weights = [group.weight for group in vertex.groups]
-            v_mults = []
-            for idx1, w1 in enumerate(vertex.groups):
-                for idx2, w2 in enumerate(vertex.groups):
-                    if idx1 != idx2:
-                        # Weight [vgroup * vgroup] for index = <mult>
-                        if (w1.group, w2.group) not in weights:
-                            weights[(w1.group, w2.group)] = dict()
-                        weights[(w1.group, w2.group)][vertex.index] = w1.weight * w2.weight
+        # This is O(n*m^2) for n verts and m bones in the worst case of every vertex being assigned to every bone's
+        # vertex group.
+        # Generally runs relatively quickly since each vertex is likely to only be assigned to around 4 or fewer
+        # vertex groups, making it much more like O(n) in most cases
+        bone_weights = dict()
+        for v_idx, vertex in enumerate(mesh.data.vertices):
+            groups = vertex.groups
+            # This gives a time complexity of O((m^2 - m)/2), which is still the same class as O(m^2) for iterating
+            # groups in its entirety in two loops, but will result in just under half the number of iterations.
+            #
+            # We want to skip the case when w1 == w2, and we know that (w1, w2) will result in the same values as
+            # (w2, w1), so we want to skip those as well.
+            # If we were to iterate the list [0,1,2], 0 only needs to be paired with [1,2], 1 only needs to be
+            # paired with [2] and 2 doesn't need to be paired with anything.
+            # As a general formula, my_list[n] only needs to be paired with my_list[n+1:].
+            # Since the last element doesn't need to be paired with anything, we can skip it in the initial iteration.
+            for g_idx, w1 in enumerate(groups[:-1]):
+                w1_group = w1.group
+                w1_weight = w1.weight
+                # Now iterate over the remaining groups that w1 needs to be paired with
+                for w2 in groups[g_idx+1:]:
+                    w2_group = w2.group
+                    # w1_group and w2_group can be in any order so order them when making the key
+                    key = (w1_group, w2_group) if w1_group < w2_group else (w2_group, w1_group)
+                    # Weight [vgroup * vgroup] for index = <mult>
+                    weight = w1_weight * w2.weight
+                    if key not in bone_weights:
+                        # Add a new dictionary
+                        bone_weights[key] = {v_idx: weight}
+                    else:
+                        # Add the value 'weight' with key 'v_idx'
+                        bone_weights[key][v_idx] = weight
 
-        # Normalize per vertex group pair
-        normalizedweights = dict()
-        for pair, weighting in weights.items():
-            m_min = 1
-            m_max = 0
-            for _, weight in weighting.items():
-                m_min = min(m_min, weight)
-                m_max = max(m_max, weight)
-
-            if pair not in normalizedweights:
-                normalizedweights[pair] = dict()
-            for v_index, weight in weighting.items():
-                try:
-                    normalizedweights[pair][v_index] = (weight - m_min) / (m_max - m_min)
-                except ZeroDivisionError:
-                    normalizedweights[pair][v_index] = weight
+        # Normalize per vertex group pair, in-place
+        for pair, weighting in bone_weights.items():
+            weight_vals = weighting.values()
+            m_min = min(weight_vals)
+            m_max = max(weight_vals)
+            # m_max and m_min will always be in the range [0,1] since vertex group weights are always in the range [0,1]
+            # and [0,1] * [0,1] -> [0,1]
+            diff = m_max - m_min
+            # Normalize and update each weight
+            # If diff equals zero then max and min are the same, meaning all these weight values must be the same. There
+            # is no min and max to normalize them between, so we'll leave them unchanged
+            # TODO: When diff == 0, is there a specific value that should be set instead of leaving the weights
+            #       unchanged?
+            if diff != 0:
+                for v_index, weight in weighting.items():
+                    weighting[v_index] = (weight - m_min) / diff
 
         newweights = dict()
-        for pair, weighting in normalizedweights.items():
+        # Collect all the normalized weights for each vertex
+        for weighting in bone_weights.values():
             for v_index, weight in weighting.items():
-                try:
-                    newweights[v_index] = max(newweights[v_index], weight)
-                except KeyError:
-                    newweights[v_index] = weight
+                weights = newweights.setdefault(v_index, [])
+                weights.append(weight)
 
         s_weights = dict()
-
+        # FIXME: This assumes the first shape key is always the relative key
+        # TODO: This can be done ~10 times quicker with numpy and foreach_get, but the rest of this function and its
+        #       uses would have to be changed to use ndarrays instead of nested dictionaries
         # Weight by relative shape key movement. This is kind of slow, but not too bad. It's O(n*m) for n verts and m shape keys,
         # but shape keys contain every vert (not just the ones they impact)
-        # For shape key in shape keys:
-        if mesh.data.shape_keys is not None:
-            for key_block in mesh.data.shape_keys.key_blocks[1:]:
-                basis = mesh.data.shape_keys.key_blocks[0]
-                s_weights[key_block.name] = dict()
+        if mesh.data.shape_keys is not None and len(mesh.data.shape_keys.key_blocks) > 1:
+            key_blocks = mesh.data.shape_keys.key_blocks
 
-                for idx, vert in enumerate(key_block.data):
-                    s_weights[key_block.name][idx] = math.sqrt(math.pow(basis.data[idx].co[0] - vert.co[0], 2.0) +
-                                                                    math.pow(basis.data[idx].co[1] - vert.co[1], 2.0) +
-                                                                    math.pow(basis.data[idx].co[2] - vert.co[2], 2.0))
+            # Pre-allocate a dictionary per shape key other than the basis so there's no need to spend time checking if
+            # a shape key's dictionary already exists, and creating it if not, while iterating
+            s_idx_weights = {key_idx: {} for key_idx in range(1, len(key_blocks))}
+            # We want to make sure we only iterate through the data (vertex) of each shape key at most once
+            # So, iterate through each datum (vertex) in each key_block simultaneously
+            for vert_idx, kb_data_tuple in enumerate(zip(*(kb.data for kb in key_blocks))):
+                # The first element in the tuple will be the data for the basis shape key
+                basis_co = kb_data_tuple[0].co
+                # For the rest of the key_blocks in the tuple:
+                for key_idx, key_datum in enumerate(kb_data_tuple[1:], start=1):
+                    # Find the distance between the basis and the current key_block and add that distance to
+                    # the dictionary of the current key_block with the vertex index as the key
+                    s_idx_weights[key_idx][vert_idx] = (basis_co - key_datum.co).length
 
-        # normalize min/max vert movement
-        s_normalizedweights = dict()
+            # The current s_idx_weights' keys are the index of each key_block, but we want the keys to be the
+            # key_blocks' names so remap from key_idx:vert_distances to key_name:vert_distances
+            s_weights = {key_blocks[key_idx].name: vert_distances for key_idx, vert_distances in s_idx_weights.items()}
+
+        # normalize min/max vert movement, in-place
         for keyname, weighting in s_weights.items():
-            m_min = math.inf
-            m_max = 0
-            for _, weight in weighting.items():
-                m_min = min(m_min, weight)
-                m_max = max(m_max, weight)
+            weight_vals = weighting.values()
+            m_min = min(weight_vals)
+            m_max = max(weight_vals)
 
-            if keyname not in s_normalizedweights:
-                s_normalizedweights[keyname] = dict()
-            for v_index, weight in weighting.items():
-                try:
-                    s_normalizedweights[keyname][v_index] = (weight - m_min) / (m_max - m_min)
-                except ZeroDivisionError:
-                    s_normalizedweights[keyname][v_index] = weight
+            diff = m_max - m_min
 
-        # find max normalized movement over all shape keys
-        for pair, weighting in s_normalizedweights.items():
+            # Normalize and update each weight
+            # If diff equals zero then max and min are the same meaning all these weight values must be the same. There
+            # is no min and max to normalize them between, so we'll leave them unchanged
+            # TODO: When diff == 0, wouldn't a value in [0,1] be better than leaving the weights unchanged?
+            if diff != 0:
+                for v_index, weight in weighting.items():
+                    weighting[v_index] = (weight - m_min) / diff
+
+        # collect all the normalized movement over all shape keys into newweights
+        for pair, weighting in s_weights.items():
             for v_index, weight in weighting.items():
-                try:
-                    newweights[v_index] = max(newweights[v_index], weight)
-                except KeyError:
-                    newweights[v_index] = weight
+                weights = newweights.setdefault(v_index, [])
+                weights.append(weight)
+
+        # Update each {key:value_list} pair to {key:max(value_list)}
+        for v_index, weights in newweights.items():
+            newweights[v_index] = max(weights)
 
         return newweights
 
@@ -310,7 +344,7 @@ class AutoDecimateButton(bpy.types.Operator):
 
         if animation_weighting and not loop_decimation:
             for mesh in meshes_obj:
-                newweights = self.get_animation_weighting(context, mesh)
+                newweights = self.get_animation_weighting(mesh)
 
                 # TODO: ignore shape keys which move very little?
                 context.view_layer.objects.active = mesh
@@ -521,7 +555,7 @@ class AutoDecimateButton(bpy.types.Operator):
                 print(len(weights))
 
                 if animation_weighting:
-                    newweights = self.get_animation_weighting(context, mesh_obj)
+                    newweights = self.get_animation_weighting(mesh_obj)
                     for idx, _ in newweights.items():
                         weights[idx] = max(weights[idx], newweights[idx])
 
