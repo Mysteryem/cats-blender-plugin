@@ -1734,13 +1734,26 @@ def remove_doubles(mesh, threshold, save_shapes=True):
     return pre_tris - len(mesh.data.polygons)
 
 
+# If this is repeatedly needed for a mesh or loop_triangles are needed for a more general operation, it would be
+# better to obj.data.calc_loop_triangles() and then use obj.data.loop_triangles, however, this is only in 2.80+.
+# The 2.79 equivalent is obj.data.calc_tessface() and obj.data.tessface, but that tessellates to both triangles and
+# quads, so we can't use it for counting or otherwise working with a triangulated mesh.
+# Does not support editmode. If edit mode support is needed, add a check for edit mode and then use bmesh:
+# # Get bmesh from edit mode mesh
+# bmesh_mesh = bmesh.from_edit_mesh(obj.data)
+# if version_2_79_or_older():
+#     # Unlike mesh.calc_tessface which tessellates to both triangles and quads, bmesh.calc_tessface tessellates to only
+#     # triangles
+#     return len(bmesh_mesh.calc_tessface())
+# else:
+#     return len(bmesh_mesh.calc_loop_triangles())
 def get_tricount(obj):
-    # Triangulates with Bmesh to avoid messing with the original geometry
-    bmesh_mesh = bmesh.new()
-    bmesh_mesh.from_mesh(obj.data)
-
-    bmesh.ops.triangulate(bmesh_mesh, faces=bmesh_mesh.faces[:])
-    return len(bmesh_mesh.faces)
+    # We'll use the fact that the number of triangles of a polygon is the number of sides minus 2.
+    polygons = obj.data.polygons
+    poly_sides = np.empty(len(polygons), dtype=np.uintc)
+    polygons.foreach_get('loop_total', poly_sides)
+    poly_sides -= 2
+    return poly_sides.sum()
 
 
 def get_bone_orientations(armature):
