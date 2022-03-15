@@ -190,16 +190,10 @@ class AutoDecimateButton(bpy.types.Operator):
         return {'FINISHED'}
 
     @staticmethod
-    def get_animation_weighting(mesh):
-        # TODO: Only check pose bones
-        # Weight by multiplied bone weights for every pair of bones.
-        # This is O(n*m^2) for n verts and m bones in the worst case of every vertex being assigned to every bone's
-        # vertex group.
-        # Generally runs relatively quickly since each vertex is likely to only be assigned to around 4 or fewer
-        # vertex groups, making it much more like O(n) in most cases
+    def get_animation_weighting(mesh, armature=None):
         bone_weights = dict()
-        for v_idx, vertex in enumerate(mesh.data.vertices):
-            groups = vertex.groups
+
+        def calc_weight_pairs(v_idx, groups):
             # This gives a time complexity of O((m^2 - m)/2), which is still the same class as O(m^2) for iterating
             # groups in its entirety in two loops, but will result in just under half the number of iterations.
             #
@@ -213,7 +207,7 @@ class AutoDecimateButton(bpy.types.Operator):
                 w1_group = w1.group
                 w1_weight = w1.weight
                 # Now iterate over the remaining groups that w1 needs to be paired with
-                for w2 in groups[g_idx+1:]:
+                for w2 in groups[g_idx + 1:]:
                     w2_group = w2.group
                     # w1_group and w2_group can be in any order so order them when making the key
                     key = (w1_group, w2_group) if w1_group < w2_group else (w2_group, w1_group)
@@ -225,6 +219,21 @@ class AutoDecimateButton(bpy.types.Operator):
                     else:
                         # Add the value 'weight' with key 'v_idx'
                         bone_weights[key][v_idx] = weight
+
+        # Weight by multiplied bone weights for every pair of bones.
+        # This is O(n*m^2) for n verts and m bones in the worst case of every vertex being assigned to every bone's
+        # vertex group.
+        # Generally runs relatively quickly since each vertex is likely to only be assigned to around 4 or fewer
+        # vertex groups, making it much more like O(n) in most cases
+        if armature is not None:
+            deform_bone_names = Common.get_deform_bone_names(mesh, armature)
+            deform_bone_vg_idx = {mesh.vertex_groups[name].index for name in deform_bone_names}
+            for v_idx, vertex in enumerate(mesh.data.vertices):
+                deform_groups = [g for g in vertex.groups if g.group in deform_bone_vg_idx]
+                calc_weight_pairs(v_idx, deform_groups)
+        else:
+            for v_idx, vertex in enumerate(mesh.data.vertices):
+                calc_weight_pairs(v_idx, vertex.groups)
 
         # Normalize per vertex group pair, in-place
         for pair, weighting in bone_weights.items():
@@ -326,6 +335,9 @@ class AutoDecimateButton(bpy.types.Operator):
         tris_count = 0
 
         meshes_obj = Common.get_meshes_objects(armature_name=self.armature_name)
+        armature_obj = bpy.data.object.get(self.armature_name)
+        if armature_obj.type != 'ARMATURE':
+            armature_obj = None
 
         for mesh in meshes_obj:
             Common.set_active(mesh)
@@ -344,7 +356,7 @@ class AutoDecimateButton(bpy.types.Operator):
 
         if animation_weighting and not loop_decimation:
             for mesh in meshes_obj:
-                newweights = self.get_animation_weighting(mesh)
+                newweights = self.get_animation_weighting(mesh, armature_obj)
 
                 # TODO: ignore shape keys which move very little?
                 context.view_layer.objects.active = mesh
@@ -555,7 +567,7 @@ class AutoDecimateButton(bpy.types.Operator):
                 print(len(weights))
 
                 if animation_weighting:
-                    newweights = self.get_animation_weighting(mesh_obj)
+                    newweights = self.get_animation_weighting(mesh_obj, armature_obj)
                     for idx, _ in newweights.items():
                         weights[idx] = max(weights[idx], newweights[idx])
 

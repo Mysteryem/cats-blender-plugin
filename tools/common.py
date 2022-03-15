@@ -2328,6 +2328,20 @@ def html_to_text(html):
     return parser.get_text()
 
 
+def get_deform_bone_names(mesh_like_obj, armature):
+    """Get a set of the names of all deform bones for a given mesh and armature. A deform bone is any bone in the
+     armature which also has a vertex group in the mesh.
+
+     The armature argument may either be a bpy.types.Object with type == 'ARMATURE' or a bpy.types.Armature.
+
+     :return: Set of deform bone names"""
+    if isinstance(armature, bpy.types.Object):
+        armature = armature.data
+    all_deform_bone_names = {bone.name for bone in armature.bones if bone.use_deform}
+    vertex_group_names = {group.name for group in mesh_like_obj.vertex_groups}
+    return all_deform_bone_names.intersection(vertex_group_names)
+
+
 """ === THIS CODE COULD BE USEFUL === """
 
 # def addvertex(meshname, shapekey_name):
