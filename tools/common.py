@@ -1699,6 +1699,45 @@ class ShowError(bpy.types.Operator):
                     row.label(text=line, icon_value=Supporter.preview_collections["custom_icons"]["empty"].icon_id)
 
 
+class NumpyShapeKeyHelper(object):
+    _tuple_like_dtype = np.dtype([('', np.single), ] * 3)
+
+    def __init__(self, obj, *, shape=(-1, 3)):
+        if obj and obj.data.shape_keys:
+            self.key_blocks = obj.data.shape_keys.key_blocks
+        else:
+            self.key_blocks = {}
+        self.kb_co = {}
+        self.shape = shape
+
+    def get_shape_co(self, shape_key, *, tuple_like=False):
+        """Get the co array for the shape_key argument.
+
+        The shape_key argument may either be a bpy.types.ShapeKey or the name of a shape key. A KeyError will be
+        raised if no shape key with a matching name exists.
+
+        Passing tuple_like=True will return the shape key co viewed as a tuple-like type where each co is considered
+        a single element. This will always be a 1-dimensional array. The tuple-like type allows for faster equals
+        comparisons and functions which only work on 1-dimensional arrays, such as np.setdiff1d
+
+        :return: sef"""
+        name = shape_key if isinstance(shape_key, str) else shape_key.name
+
+        kb_cos = self.kb_co
+        kb_co = kb_cos.get(name)
+        if kb_co is None:
+            key_blocks = self.key_blocks
+            key_block = key_blocks[name]
+            kb_co = np.empty(len(key_block.data) * 3, dtype=np.single)
+            key_block.data.foreach_get('co', kb_co)
+            kb_co.shape = self.shape
+            kb_cos[name] = kb_co
+        if tuple_like:
+            return kb_co.ravel().view(NumpyShapeKeyHelper._tuple_like_dtype)
+        else:
+            return kb_co
+
+
 def remove_doubles(mesh, threshold, save_shapes=True):
     if not mesh:
         return 0
@@ -1707,31 +1746,29 @@ def remove_doubles(mesh, threshold, save_shapes=True):
     if not has_shapekeys(mesh) or len(mesh.data.shape_keys.key_blocks) == 1:
         return 0
 
-    pre_tris = len(mesh.data.polygons)
+    pre_poly_count = len(mesh.data.polygons)
 
     set_active(mesh)
-    switch('EDIT')
-    bpy.ops.mesh.select_mode(type="VERT")
-    bpy.ops.mesh.select_all(action='DESELECT')
 
     if save_shapes and has_shapekeys(mesh):
-        switch('OBJECT')
+        mesh.data.polygons.foreach_set('select', np.zeros(len(mesh.data.polygons), dtype=bool))
+        mesh.data.edges.foreach_set('select', np.zeros(len(mesh.data.edges), dtype=bool))
+        helper = NumpyShapeKeyHelper(mesh)
+        not_in_shape_key = np.ones(len(mesh.data.vertices), dtype=bool)
         for kb in mesh.data.shape_keys.key_blocks:
-            i = 0
-            for v0, v1 in zip(kb.relative_key.data, kb.data):
-                if v0.co != v1.co:
-                    mesh.data.vertices[i].select = True
-                i += 1
+            not_in_shape_key &= helper.get_shape_co(kb, tuple_like=True) == helper.get_shape_co(kb.relative_key, tuple_like=True)
+        mesh.data.vertices.foreach_set('select', not_in_shape_key)
         switch('EDIT')
-        bpy.ops.mesh.select_all(action='INVERT')
     else:
+        switch('EDIT')
         bpy.ops.mesh.select_all(action='SELECT')
 
+    bpy.ops.mesh.select_mode(type="VERT")
     bpy.ops.mesh.remove_doubles(threshold=threshold)
     bpy.ops.mesh.select_all(action='DESELECT')
     switch('OBJECT')
 
-    return pre_tris - len(mesh.data.polygons)
+    return pre_poly_count - len(mesh.data.polygons)
 
 
 # If this is repeatedly needed for a mesh or loop_triangles are needed for a more general operation, it would be
