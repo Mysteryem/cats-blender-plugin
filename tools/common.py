@@ -1739,6 +1739,9 @@ class NumpyShapeKeyHelper(object):
 
 
 def remove_doubles(mesh, threshold, save_shapes=True):
+    """Remove doubles from a mesh, but only if it has shape keys.
+
+    :return: The number of polygons removed."""
     if not mesh:
         return 0
 
@@ -1748,26 +1751,25 @@ def remove_doubles(mesh, threshold, save_shapes=True):
 
     pre_poly_count = len(mesh.data.polygons)
 
-    set_active(mesh)
-
+    # the mesh remove_doubles operator has a minimum threshold of 1e-6, whereas the bmesh remove_doubles operator has a
+    # minimum of zero. To match the behaviour of bpy.ops.mesh.remove_doubles we'll set 1e-6 as the minimum threshold
+    threshold = max(1e-6, threshold)
+    bm = bmesh.new()
     if save_shapes and has_shapekeys(mesh):
-        mesh.data.polygons.foreach_set('select', np.zeros(len(mesh.data.polygons), dtype=bool))
-        mesh.data.edges.foreach_set('select', np.zeros(len(mesh.data.edges), dtype=bool))
         helper = NumpyShapeKeyHelper(mesh)
         not_in_shape_key = np.ones(len(mesh.data.vertices), dtype=bool)
         for kb in mesh.data.shape_keys.key_blocks:
             not_in_shape_key &= helper.get_shape_co(kb, tuple_like=True) == helper.get_shape_co(kb.relative_key, tuple_like=True)
         mesh.data.vertices.foreach_set('select', not_in_shape_key)
-        switch('EDIT')
+        bm.from_mesh(mesh.data)
+        bmesh.ops.remove_doubles(bm, verts=[v for v in bm.verts if v.select], dist=threshold)
+        bm.to_mesh(mesh.data)
+        # Deselect all the vertices
+        mesh.data.vertices.foreach_set('select', np.zeros(len(mesh.data.vertices), dtype=bool))
     else:
-        switch('EDIT')
-        bpy.ops.mesh.select_all(action='SELECT')
-
-    bpy.ops.mesh.select_mode(type="VERT")
-    bpy.ops.mesh.remove_doubles(threshold=threshold)
-    bpy.ops.mesh.select_all(action='DESELECT')
-    switch('OBJECT')
-
+        bm.from_mesh(mesh.data)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=threshold)
+        bm.to_mesh(mesh.data)
     return pre_poly_count - len(mesh.data.polygons)
 
 
