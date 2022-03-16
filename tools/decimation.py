@@ -334,6 +334,8 @@ class AutoDecimateButton(bpy.types.Operator):
         current_tris_count = 0
         tris_count = 0
 
+        cats_animation_vg_name = "CATS Animation"
+
         meshes_obj = Common.get_meshes_objects(armature_name=self.armature_name)
         armature_obj = bpy.data.object.get(self.armature_name)
         if armature_obj.type != 'ARMATURE':
@@ -358,12 +360,19 @@ class AutoDecimateButton(bpy.types.Operator):
             for mesh in meshes_obj:
                 newweights = self.get_animation_weighting(mesh, armature_obj)
 
-                # TODO: ignore shape keys which move very little?
-                context.view_layer.objects.active = mesh
-                bpy.ops.object.vertex_group_add()
-                mesh.vertex_groups[-1].name = "CATS Animation"
+                # Vertices weight painted to a single bone are likely to end up with the same newweight
+                # Mirrored meshes are likely to have the same newweight for each pair of mirrored vertices
+                # All vertices with the same weight can be updated at the same time, so we'll flip the keys and values
+                # to get all the vertices which need to be set to each unique weight
+                weight_to_indices = {}
                 for idx, weight in newweights.items():
-                    mesh.vertex_groups[-1].add([idx], weight, "REPLACE")
+                    vertex_indices = weight_to_indices.setdefault(weight, [])
+                    vertex_indices.append(idx)
+
+                cats_animation_vg = mesh.vertex_groups.new(name=cats_animation_vg_name)
+
+                for weight, vertex_indices in weight_to_indices.items():
+                    cats_animation_vg.add(vertex_indices, weight, "REPLACE")
 
         if save_fingers:
             for mesh in meshes_obj:
@@ -500,7 +509,7 @@ class AutoDecimateButton(bpy.types.Operator):
                 mod.ratio = decimation
                 mod.use_collapse_triangulate = True
                 if animation_weighting:
-                    mod.vertex_group = "CATS Animation"
+                    mod.vertex_group = cats_animation_vg_name
                     mod.vertex_group_factor = animation_weighting_factor
                     mod.invert_vertex_group = True
                 Common.apply_modifier(mod)
