@@ -376,28 +376,63 @@ class AutoDecimateButton(bpy.types.Operator):
                     cats_animation_vg.add(vertex_indices, weight, "REPLACE")
 
         if save_fingers:
-            for mesh in meshes_obj:
-                if len(mesh.vertex_groups) > 0:
-                    Common.set_active(mesh)
-                    Common.switch('EDIT')
+            def select_fingers(mesh_obj):
+                vertex_groups = mesh_obj.vertex_groups
+                finger_bones = Bones.bone_finger_list
+                # Irrelevant for 2.79 since only the active object can be opened in edit mode, but for 2.80+, which can
+                # open multiple objects in edit mode at the same time, it makes it so there's no need to keep changing
+                # the active object in order to use the vertex_group_select operator.
+                context_override = {'object': mesh_obj}
 
-                    bpy.ops.mesh.select_mode(type='VERT')
+                for side_suffix in ['L', 'R']:
+                    for finger_bone in finger_bones:
+                        vertex_group = vertex_groups.get(finger_bone + side_suffix)
+                        if vertex_group:
+                            mesh_obj.vertex_groups.active_index = vertex_group.index
+                            bpy.ops.object.vertex_group_select(context_override)
 
-                    for finger in Bones.bone_finger_list:
-                        print(finger)
-                        vgs = [mesh.vertex_groups.get(finger + 'L'), mesh.vertex_groups.get(finger + 'R')]
-                        for vg in vgs:
-                            if vg:
-                                bpy.ops.object.vertex_group_set_active(group=vg.name)
-                                bpy.ops.object.vertex_group_select()
-                                try:
-                                    bpy.ops.mesh.separate(type='SELECTED')
-                                except RuntimeError:
-                                    pass
+            def separate_selected():
+                try:
+                    bpy.ops.mesh.separate(type='SELECTED')
+                except RuntimeError:
+                    # Raises RuntimeError when there's nothing selected
+                    pass
 
-                    bpy.ops.object.mode_set(mode='OBJECT')
+            if Common.version_2_79_or_older():
+                # 2.79 can only open one mesh in edit mode at a time, so we have to edit them one by one
+                for mesh in meshes_obj:
+                    if len(mesh.vertex_groups) > 0:
+                        Common.select(mesh)
+                        Common.switch('EDIT')
+                        bpy.ops.mesh.select_mode(type='VERT')
+                        select_fingers(mesh)
+                        # Separate the selected vertices of the mesh into a separate mesh
+                        separate_selected()
+            else:
+                # 2.80+ can open multiple meshes in edit mode at the same time
+                # Select all the mesh objects with vertex groups and add them to a list for further iteration later on
+                meshes_with_vertex_groups = []
+                for mesh in meshes_obj:
+                    if len(mesh.vertex_groups) > 0:
+                        Common.select(mesh)
+                        meshes_with_vertex_groups.append(mesh)
 
-                    Common.unselect_all()
+                # Open the selected meshes in edit mode
+                Common.switch('EDIT')
+                bpy.ops.mesh.select_mode(type='VERT')
+
+                # For each mesh, select all the vertices in any finger vertex group
+                for mesh in meshes_with_vertex_groups:
+                    select_fingers(mesh)
+
+                # Separate the selected vertices of each mesh into a separate mesh (one new mesh per mesh with at least
+                # one vertex selected)
+                separate_selected()
+
+            # Go back to object mode
+            bpy.ops.object.mode_set(mode='OBJECT')
+            # And unselect all the mesh objects
+            Common.unselect_all()
 
         for mesh in meshes_obj:
             Common.set_active(mesh)
