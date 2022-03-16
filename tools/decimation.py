@@ -335,6 +335,7 @@ class AutoDecimateButton(bpy.types.Operator):
         tris_count = 0
 
         cats_animation_vg_name = "CATS Animation"
+        cats_basis_shape_key_name = "Cats Basis"
 
         meshes_obj = Common.get_meshes_objects(armature_name=self.armature_name)
         armature_obj = bpy.data.object.get(self.armature_name)
@@ -420,7 +421,7 @@ class AutoDecimateButton(bpy.types.Operator):
                         mesh.active_shape_key.relative_key = mesh.active_shape_key
                         # Add a duplicate basis key which we un-apply to fix shape keys
                         bpy.ops.object.shape_key_add(from_mix=False)
-                        mesh.active_shape_key.name = "CATS Basis"
+                        mesh.active_shape_key.name = cats_basis_shape_key_name
                         mesh.active_shape_key_index = 0
                     meshes.append((mesh, tris))
                     tris_count += tris
@@ -652,9 +653,9 @@ class AutoDecimateButton(bpy.types.Operator):
                 for idx in range(1, len(mesh_obj.data.shape_keys.key_blocks) - 1):
                     mesh_obj.active_shape_key_index = idx
                     Common.switch('EDIT')
-                    bpy.ops.mesh.blend_from_shape(shape="CATS Basis", blend=-1.0, add=True)
+                    bpy.ops.mesh.blend_from_shape(shape=cats_basis_shape_key_name, blend=-1.0, add=True)
                     Common.switch('OBJECT')
-                mesh_obj.shape_key_remove(key=mesh_obj.data.shape_keys.key_blocks["CATS Basis"])
+                mesh_obj.shape_key_remove(key=mesh_obj.data.shape_keys.key_blocks[cats_basis_shape_key_name])
                 mesh_obj.active_shape_key_index = 0
 
             Common.unselect_all()
