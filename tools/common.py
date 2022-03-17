@@ -251,6 +251,17 @@ def switch(new_mode, check_mode=True):
         bpy.ops.object.mode_set(mode=new_mode, toggle=False)
 
 
+def shape_key_remove_all(mesh_obj):
+    """Remove all shape keys from an object.
+
+    Uses the faster, direct, method added in 2.80 for Blender versions 2.80+."""
+    if version_2_79_or_older():
+        bpy.ops.object.shape_key_remove({'object': mesh_obj}, all=True)
+    else:
+        # Not to be confused with bpy.ops.object.shape_key_clear() which clears the weights of all shape keys
+        mesh_obj.shape_key_clear()
+
+
 def set_default_stage_old():
     switch('OBJECT')
     unhide_all()

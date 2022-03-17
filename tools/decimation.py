@@ -456,28 +456,26 @@ class AutoDecimateButton(bpy.types.Operator):
 
         meshes = []
         for mesh in meshes_obj:
-            Common.set_active(mesh)
-            tris = Common.get_tricount(mesh)
-
             if custom_decimation and mesh.name in ignore_meshes:
-                Common.unselect_all()
                 continue
+
+            tris = Common.get_tricount(mesh)
 
             if Common.has_shapekeys(mesh):
                 if full_decimation:
-                    bpy.ops.object.shape_key_remove(all=True)
+                    Common.shape_key_remove_all(mesh)
                     meshes.append((mesh, tris))
                     tris_count += tris
                 elif smart_decimation:
                     if len(mesh.data.shape_keys.key_blocks) == 1:
-                        bpy.ops.object.shape_key_remove(all=True)
+                        Common.shape_key_remove_all(mesh)
                     else:
-                        mesh.active_shape_key_index = 0
+                        # TODO: Do we care about this sanity check? It is just generally a good thing to always enforce.
                         # Sanity check, make sure basis isn't against something weird
-                        mesh.active_shape_key.relative_key = mesh.active_shape_key
+                        basis_shape_key = mesh.data.shape_keys.key_blocks[0]
+                        basis_shape_key.relative_key = basis_shape_key
                         # Add a duplicate basis key which we un-apply to fix shape keys
-                        bpy.ops.object.shape_key_add(from_mix=False)
-                        mesh.active_shape_key.name = cats_basis_shape_key_name
+                        mesh.shape_key_add(name=cats_basis_shape_key_name, from_mix=False)
                         mesh.active_shape_key_index = 0
                     meshes.append((mesh, tris))
                     tris_count += tris
@@ -491,24 +489,21 @@ class AutoDecimateButton(bpy.types.Operator):
                             found = True
                             break
                     if found:
-                        Common.unselect_all()
                         continue
-                    bpy.ops.object.shape_key_remove(all=True)
+                    Common.shape_key_remove_all(mesh)
                     meshes.append((mesh, tris))
                     tris_count += tris
                 elif half_decimation and len(mesh.data.shape_keys.key_blocks) < 4:
-                    bpy.ops.object.shape_key_remove(all=True)
+                    Common.shape_key_remove_all(mesh)
                     meshes.append((mesh, tris))
                     tris_count += tris
                 elif len(mesh.data.shape_keys.key_blocks) == 1:
-                    bpy.ops.object.shape_key_remove(all=True)
+                    Common.shape_key_remove_all(mesh)
                     meshes.append((mesh, tris))
                     tris_count += tris
             else:
                 meshes.append((mesh, tris))
                 tris_count += tris
-
-            Common.unselect_all()
 
         print(current_tris_count)
         print(tris_count)
@@ -545,6 +540,7 @@ class AutoDecimateButton(bpy.types.Operator):
 
         meshes.sort(key=lambda x: x[1])
 
+        Common.unselect_all()
         for mesh in reversed(meshes):
             mesh_obj = mesh[0]
             tris = mesh[1]
