@@ -186,4 +186,10 @@ class DecimationPanel(ToolPanel, bpy.types.Panel):
         col.label(text=t('DecimationPanel.warn.notIfBaking'), icon='INFO')
         row = col.row(align=True)
         row.scale_y = 1.2
-        row.operator(Decimation.AutoDecimateButton.bl_idname, icon='MOD_DECIM')
+
+        auto_decimate_op = row.operator(Decimation.AutoDecimateButton.bl_idname, icon='MOD_DECIM')
+        current_armature = context.scene.armature
+        if current_armature:
+            auto_decimate_op.armature_name = current_armature
+
+
