@@ -169,6 +169,8 @@ class AutoDecimateButton(bpy.types.Operator):
         name='seperate_materials'
     )
 
+    cats_animation_vg_name = "CATS Animation"
+
     def execute(self, context):
         start = perf_counter()
         meshes = Common.get_meshes_objects()
@@ -195,15 +197,17 @@ class AutoDecimateButton(bpy.types.Operator):
         return {'FINISHED'}
 
     @staticmethod
-    def get_animation_weighting(mesh, armature=None):
+    def _get_animation_weighting(mesh, armature=None):
         bone_weights = dict()
 
+        # It would be nice to get some explanation on what the maths in this. What is the relevance of pairing each
+        # vertex group together? - Mysteryem
         def calc_weight_pairs(v_idx, groups):
-            # This gives a time complexity of O((m^2 - m)/2), which is still the same class as O(m^2) for iterating
+            # This has a time complexity of O((m^2 - m)/2), which is still the same class as O(m^2) for iterating
             # groups in its entirety in two loops, but will result in just under half the number of iterations.
             #
-            # We want to skip the case when w1 == w2, and we know that (w1, w2) will result in the same values as
-            # (w2, w1), so we want to skip those as well.
+            # We want to skip the case when w1 == w2, and, because multiplication is commutative, we know that (w1, w2)
+            # will result in the same values as (w2, w1), so we want to skip those as well.
             # If we were to iterate the list [0,1,2], 0 only needs to be paired with [1,2], 1 only needs to be
             # paired with [2] and 2 doesn't need to be paired with anything.
             # As a general formula, my_list[n] only needs to be paired with my_list[n+1:].
@@ -214,7 +218,7 @@ class AutoDecimateButton(bpy.types.Operator):
                 # Now iterate over the remaining groups that w1 needs to be paired with
                 for w2 in groups[g_idx + 1:]:
                     w2_group = w2.group
-                    # w1_group and w2_group can be in any order so order them when making the key
+                    # w1_group and w2_group can be in any order so sort them when making the key
                     key = (w1_group, w2_group) if w1_group < w2_group else (w2_group, w1_group)
                     # Weight [vgroup * vgroup] for index = <mult>
                     weight = w1_weight * w2.weight
@@ -319,7 +323,86 @@ class AutoDecimateButton(bpy.types.Operator):
 
         return newweights
 
+    @staticmethod
+    def _create_cats_animation_vertex_groups(meshes_obj, armature_obj):
+        for mesh in meshes_obj:
+            newweights = AutoDecimateButton._get_animation_weighting(mesh, armature_obj)
 
+            # Vertices weight painted to a single bone are likely to end up with the same newweight
+            # Mirrored meshes are likely to have the same newweight for each pair of mirrored vertices
+            # All vertices with the same weight can be updated at the same time, so we'll flip the keys and values
+            # to get all the vertices which need to be set to each unique weight
+            weight_to_indices = {}
+            for idx, weight in newweights.items():
+                vertex_indices = weight_to_indices.setdefault(weight, [])
+                vertex_indices.append(idx)
+
+            cats_animation_vg = mesh.vertex_groups.new(name=AutoDecimateButton.cats_animation_vg_name)
+
+            for weight, vertex_indices in weight_to_indices.items():
+                cats_animation_vg.add(vertex_indices, weight, "REPLACE")
+
+    @staticmethod
+    def _separate_fingers(meshes_obj):
+        """For each mesh, separate all the vertices belonging to a finger vertex group into a new mesh."""
+        def select_fingers(mesh_obj):
+            vertex_groups = mesh_obj.vertex_groups
+            finger_bones = Bones.bone_finger_list
+            # Irrelevant for 2.79 since only the active object can be opened in edit mode, but for 2.80+, which can
+            # open multiple objects in edit mode at the same time, it makes it so there's no need to keep changing
+            # the active object in order to use the vertex_group_select operator.
+            context_override = {'object': mesh_obj}
+
+            for side_suffix in ['L', 'R']:
+                for finger_bone in finger_bones:
+                    vertex_group = vertex_groups.get(finger_bone + side_suffix)
+                    if vertex_group:
+                        mesh_obj.vertex_groups.active_index = vertex_group.index
+                        bpy.ops.object.vertex_group_select(context_override)
+
+        def separate_selected():
+            try:
+                bpy.ops.mesh.separate(type='SELECTED')
+            except RuntimeError:
+                # Raises RuntimeError when there's nothing selected
+                pass
+
+        # Clear current selection so we don't edit anything extra
+        Common.unselect_all()
+
+        if Common.version_2_79_or_older():
+            # 2.79 can only open one mesh in edit mode at a time, so we have to edit them one by one
+            for mesh in meshes_obj:
+                if len(mesh.vertex_groups) > 0:
+                    Common.select(mesh)
+                    Common.switch('EDIT')
+                    bpy.ops.mesh.select_mode(type='VERT')
+                    select_fingers(mesh)
+                    # Separate the selected vertices of the mesh into a separate mesh
+                    separate_selected()
+        else:
+            # 2.80+ can open multiple meshes in edit mode at the same time
+            # Select all the mesh objects with vertex groups and add them to a list for further iteration later on
+            meshes_with_vertex_groups = []
+            for mesh in meshes_obj:
+                if len(mesh.vertex_groups) > 0:
+                    Common.select(mesh)
+                    meshes_with_vertex_groups.append(mesh)
+
+            # Open the selected meshes in edit mode
+            Common.switch('EDIT')
+            bpy.ops.mesh.select_mode(type='VERT')
+
+            # For each mesh, select all the vertices in any finger vertex group
+            for mesh in meshes_with_vertex_groups:
+                select_fingers(mesh)
+
+            # Separate the selected vertices of each mesh into a separate mesh (one new mesh per mesh with at least
+            # one vertex selected)
+            separate_selected()
+
+        # Go back to object mode
+        bpy.ops.object.mode_set(mode='OBJECT')
 
     def decimate(self, context):
         print('START DECIMATION')
@@ -335,11 +418,9 @@ class AutoDecimateButton(bpy.types.Operator):
         animation_weighting = context.scene.decimation_animation_weighting
         animation_weighting_factor = context.scene.decimation_animation_weighting_factor
         max_tris = context.scene.max_tris
-        meshes = []
         current_tris_count = 0
         tris_count = 0
 
-        cats_animation_vg_name = "CATS Animation"
         cats_basis_shape_key_name = "Cats Basis"
 
         meshes_obj = Common.get_meshes_objects(armature_name=self.armature_name)
@@ -351,6 +432,9 @@ class AutoDecimateButton(bpy.types.Operator):
             Common.set_active(mesh)
             if not loop_decimation:
                 Common.switch('EDIT')
+                # TODO: Does this do anything normally? Isn't the entire mesh possibly deselected at this point?
+                # TODO: Add a raise RuntimeError in the original code and have a look. For now, added a select_all.
+                bpy.ops.mesh.select_all(action="SELECT")
                 bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')
                 Common.switch('OBJECT')
             else:
@@ -361,84 +445,16 @@ class AutoDecimateButton(bpy.types.Operator):
             if context.scene.decimation_remove_doubles:
                 Common.remove_doubles(mesh, 0.00001, save_shapes=True)
             current_tris_count += Common.get_tricount(mesh.data.polygons)
+        #
+        Common.unselect_all()
 
         if animation_weighting and not loop_decimation:
-            for mesh in meshes_obj:
-                newweights = self.get_animation_weighting(mesh, armature_obj)
-
-                # Vertices weight painted to a single bone are likely to end up with the same newweight
-                # Mirrored meshes are likely to have the same newweight for each pair of mirrored vertices
-                # All vertices with the same weight can be updated at the same time, so we'll flip the keys and values
-                # to get all the vertices which need to be set to each unique weight
-                weight_to_indices = {}
-                for idx, weight in newweights.items():
-                    vertex_indices = weight_to_indices.setdefault(weight, [])
-                    vertex_indices.append(idx)
-
-                cats_animation_vg = mesh.vertex_groups.new(name=cats_animation_vg_name)
-
-                for weight, vertex_indices in weight_to_indices.items():
-                    cats_animation_vg.add(vertex_indices, weight, "REPLACE")
+            AutoDecimateButton._create_cats_animation_vertex_groups(meshes_obj, armature_obj)
 
         if save_fingers:
-            def select_fingers(mesh_obj):
-                vertex_groups = mesh_obj.vertex_groups
-                finger_bones = Bones.bone_finger_list
-                # Irrelevant for 2.79 since only the active object can be opened in edit mode, but for 2.80+, which can
-                # open multiple objects in edit mode at the same time, it makes it so there's no need to keep changing
-                # the active object in order to use the vertex_group_select operator.
-                context_override = {'object': mesh_obj}
+            AutoDecimateButton._separate_fingers(meshes_obj)
 
-                for side_suffix in ['L', 'R']:
-                    for finger_bone in finger_bones:
-                        vertex_group = vertex_groups.get(finger_bone + side_suffix)
-                        if vertex_group:
-                            mesh_obj.vertex_groups.active_index = vertex_group.index
-                            bpy.ops.object.vertex_group_select(context_override)
-
-            def separate_selected():
-                try:
-                    bpy.ops.mesh.separate(type='SELECTED')
-                except RuntimeError:
-                    # Raises RuntimeError when there's nothing selected
-                    pass
-
-            if Common.version_2_79_or_older():
-                # 2.79 can only open one mesh in edit mode at a time, so we have to edit them one by one
-                for mesh in meshes_obj:
-                    if len(mesh.vertex_groups) > 0:
-                        Common.select(mesh)
-                        Common.switch('EDIT')
-                        bpy.ops.mesh.select_mode(type='VERT')
-                        select_fingers(mesh)
-                        # Separate the selected vertices of the mesh into a separate mesh
-                        separate_selected()
-            else:
-                # 2.80+ can open multiple meshes in edit mode at the same time
-                # Select all the mesh objects with vertex groups and add them to a list for further iteration later on
-                meshes_with_vertex_groups = []
-                for mesh in meshes_obj:
-                    if len(mesh.vertex_groups) > 0:
-                        Common.select(mesh)
-                        meshes_with_vertex_groups.append(mesh)
-
-                # Open the selected meshes in edit mode
-                Common.switch('EDIT')
-                bpy.ops.mesh.select_mode(type='VERT')
-
-                # For each mesh, select all the vertices in any finger vertex group
-                for mesh in meshes_with_vertex_groups:
-                    select_fingers(mesh)
-
-                # Separate the selected vertices of each mesh into a separate mesh (one new mesh per mesh with at least
-                # one vertex selected)
-                separate_selected()
-
-            # Go back to object mode
-            bpy.ops.object.mode_set(mode='OBJECT')
-            # And unselect all the mesh objects
-            Common.unselect_all()
-
+        meshes = []
         for mesh in meshes_obj:
             Common.set_active(mesh)
             tris = Common.get_tricount(mesh)
@@ -550,7 +566,7 @@ class AutoDecimateButton(bpy.types.Operator):
                 mod.ratio = decimation
                 mod.use_collapse_triangulate = True
                 if animation_weighting:
-                    mod.vertex_group = cats_animation_vg_name
+                    mod.vertex_group = AutoDecimateButton.cats_animation_vg_name
                     mod.vertex_group_factor = animation_weighting_factor
                     mod.invert_vertex_group = True
                 Common.apply_modifier(mod)
@@ -617,7 +633,7 @@ class AutoDecimateButton(bpy.types.Operator):
                 print(len(weights))
 
                 if animation_weighting:
-                    newweights = self.get_animation_weighting(mesh_obj, armature_obj)
+                    newweights = self._get_animation_weighting(mesh_obj, armature_obj)
                     for idx, _ in newweights.items():
                         weights[idx] = max(weights[idx], newweights[idx])
 
