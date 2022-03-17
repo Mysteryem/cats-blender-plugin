@@ -28,6 +28,7 @@ import bpy
 import math
 import mathutils
 import struct
+from time import perf_counter
 
 from . import common as Common
 from . import armature_bones as Bones
@@ -169,6 +170,7 @@ class AutoDecimateButton(bpy.types.Operator):
     )
 
     def execute(self, context):
+        start = perf_counter()
         meshes = Common.get_meshes_objects()
         if not meshes or len(meshes) == 0:
             self.report({'ERROR'}, t('AutoDecimateButton.error.noMesh'))
@@ -186,6 +188,9 @@ class AutoDecimateButton(bpy.types.Operator):
         Common.join_meshes(armature_name=self.armature_name)
 
         saved_data.load()
+
+        end = perf_counter()
+        print(f'Decimation finished in {end - start} seconds')
 
         return {'FINISHED'}
 
