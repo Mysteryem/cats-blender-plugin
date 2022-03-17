@@ -694,6 +694,9 @@ class AutoDecimateButton(bpy.types.Operator):
                 bpy.ops.mesh.select_all(action="DESELECT")
                 bpy.ops.object.mode_set(mode="OBJECT")
 
+            # Needed? This has been moved up from below the smart_decimation repair which no longer selects objects
+            Common.unselect_all()
+
             tris_after = len(mesh_obj.data.polygons)
             print(tris)
             print(tris_after)
@@ -702,15 +705,16 @@ class AutoDecimateButton(bpy.types.Operator):
             tris_count = tris_count - tris
             # Repair shape keys if SMART mode is enabled
             if smart_decimation and Common.has_shapekeys(mesh_obj):
-                for idx in range(1, len(mesh_obj.data.shape_keys.key_blocks) - 1):
-                    mesh_obj.active_shape_key_index = idx
-                    Common.switch('EDIT')
-                    bpy.ops.mesh.blend_from_shape(shape=cats_basis_shape_key_name, blend=-1.0, add=True)
-                    Common.switch('OBJECT')
-                mesh_obj.shape_key_remove(key=mesh_obj.data.shape_keys.key_blocks[cats_basis_shape_key_name])
-                mesh_obj.active_shape_key_index = 0
-
-            Common.unselect_all()
+                key_idx = mesh_obj.data.shape_keys.key_blocks.find(cats_basis_shape_key_name)
+                cats_basis_shape_key = mesh_obj.data.shape_keys.key_blocks[key_idx]
+                cats_basis_shape_key.slider_min = -1
+                cats_basis_shape_key.value = -1
+                orig_key_index = mesh_obj.active_shape_key_index
+                mesh_obj.active_shape_key_index = key_idx
+                bpy.ops.cats_shapekey({'object': mesh_obj})
+                # Note that after applying the operator, the cats_basis_shape_key's name will have changed
+                mesh_obj.shape_key_remove(cats_basis_shape_key)
+                mesh_obj.active_shape_key_index = orig_key_index
 
         # # Check if decimated correctly
         # if decimation < 0:
