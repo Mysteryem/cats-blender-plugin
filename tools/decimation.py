@@ -28,6 +28,7 @@ import bpy
 import math
 import mathutils
 import struct
+import bmesh
 import numpy as np
 from time import perf_counter
 
@@ -710,27 +711,39 @@ class AutoDecimateButton(bpy.types.Operator):
                     for idx, _ in newweights.items():
                         weights[idx] = max(weights[idx], newweights[idx])
 
-                all_edges = set(edge.index for edge in mesh_obj.data.edges[:])
+                edges_left_to_select = set(range(len(mesh_obj.data.edges)))
                 edge_loops = []
 
-                # pop one edge out, select it, select edge loop, remove all selected edges from the set of all edges and add to the edge loops
-                # ugly ugly, and very slow (though scalable)
-                while(len(all_edges) > 0):
-                    bpy.ops.object.mode_set(mode="EDIT")
-                    bpy.ops.mesh.select_mode(type='EDGE')
-                    bpy.ops.mesh.select_all(action="DESELECT")
-                    bpy.ops.object.mode_set(mode="OBJECT")
-                    selected_edge = next(edge for edge in all_edges)
-                    mesh_obj.data.edges[selected_edge].select = True
-                    bpy.ops.object.mode_set(mode="OBJECT")
-                    bpy.ops.object.mode_set(mode="EDIT")
-                    bpy.ops.mesh.loop_multi_select(ring=False)
-                    bpy.ops.object.mode_set(mode="OBJECT")
-                    edge_loop = set(edge.index for edge in mesh_obj.data.edges if edge.select)
-                    edge_loop.add(selected_edge)
-                    edge_loops.append(edge_loop)
-                    print("Found edge loop: {}".format(edge_loop))
-                    all_edges.difference_update(edge_loop)
+                # TODO: Count the number of edges each vertex is in, if we pick an edge and both of its vertices
+                #  are not in exactly 4 edges, then the edge loop for that edge is only the edge on its own. By doing
+                #  this, we can skip checking these edges for edge loops, this should drastically increase the speed
+                #  of meshes with many triangles.
+                # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges and add to the edge loops
+                # Enter EDIT mode and set up EDGE selection mode and clear the current selection
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.ops.mesh.select_mode(type='EDGE')
+                bpy.ops.mesh.select_all(action="DESELECT")
+                #
+                bm = bmesh.from_edit_mesh(mesh_obj.data)
+                bm.select_mode = {'EDGE'}
+                #
+                for edge in bm.edges:
+                    edge_index = edge.index
+                    if edge_index not in edges_left_to_select:
+                        continue
+                    else:
+                        edge.select = True
+                        bpy.ops.mesh.loop_multi_select(ring=False)
+                        edge_loop = [edge for edge in bm.edges if edge.select]
+                        edge_loop_i = tuple(edge.index for edge in edge_loop)
+                        edge_loops.append(edge_loop_i)
+                        print("Found edge loop: {}".format(edge_loop_i))
+                        # All the edges in this loop have been selected, so remove them from the set of edges left to
+                        # select
+                        edges_left_to_select.difference_update(edge_loop_i)
+                        for edge_in_loop in edge_loop:
+                            edge_in_loop.select = False
+                bpy.ops.object.mode_set(mode="OBJECT")
                 # from the new decimation vertex group, create a dict() of loops to sum of shape-importance (loops which contain texture edges put at the end)
                 # TODO: order needs to be usual -> texture boundaries -> mesh boundaries
                 bpy.ops.object.mode_set(mode="EDIT")
