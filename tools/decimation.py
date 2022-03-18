@@ -28,6 +28,7 @@ import bpy
 import math
 import mathutils
 import struct
+import numpy as np
 from time import perf_counter
 
 from . import common as Common
@@ -404,6 +405,111 @@ class AutoDecimateButton(bpy.types.Operator):
         # Go back to object mode
         bpy.ops.object.mode_set(mode='OBJECT')
 
+    @staticmethod
+    def _get_loop_decimate_weights(context, mesh_obj):
+        mod = mesh_obj.modifiers.new("Decimate", 'DECIMATE')
+        mod.use_symmetry = True
+        mod.symmetry_axis = 'X'
+
+        # Dark magic... encode the vert index into (usually) the x components of a UV map
+
+        # The itemsize of the single precision float and uint types may vary depending on compiler
+        # Typically, both will be 4 bytes.
+        # We can support uint smaller than single, but we can only support uint up to twice the size of single.
+        # Any more than twice the size and there wouldn't be enough space in the uvs of the uv map to store the
+        # vertex indices, though this is a very unlikely case.
+        vertex_index_type = np.dtype(np.uintc)
+        uv_type = np.dtype(np.single)
+        more_than_one_index_can_fit_in_single = vertex_index_type.itemsize < uv_type.itemsize
+        if more_than_one_index_can_fit_in_single:
+            # More than one uintc can fit in a single precision float
+            indices_per_uv_component = uv_type.itemsize // vertex_index_type.itemsize
+            view_slice = slice(None, None, 2 * indices_per_uv_component)
+        else:
+            # Either uintc and single are the same size or more than one single is needed to represent a uintc
+            # (we can only support up to 2 single precision floats)
+            uv_components_per_index = vertex_index_type.itemsize // uv_type.itemsize
+            if uv_components_per_index > 2:
+                raise RuntimeError(
+                    """There is not enough space to store uint vertex indices in a single precision float uv map in this build of blender.
+                    If you want to use loop decimation, please compile Blender such that sizeof(uint) is no more than twice sizeof(float).
+                    If you are seeing this message and didn't compile Blender yourself, please report a bug.""")
+            view_slice = slice(None, None, 2 // uv_components_per_index)
+
+        loops = mesh_obj.data.loops
+        loop_vertex_indices = np.empty(len(loops), dtype=vertex_index_type)
+        # Ideally, we would foreach_get directly into a uvs array viewed as uintc, but blender sees it as a
+        # different type, seemingly 'B' (unsigned char), meaning Blender would have to iterate and cast every
+        # element, which is slower than a direct copy when the type matches 'I' (uintc).
+        loops.foreach_get('vertex_index', loop_vertex_indices)
+
+        # Create the uv map
+        vert_uv_layer = mesh_obj.data.uv_layers.new(name='CATS Vert', do_init=False)
+        if not vert_uv_layer:
+            # vert_uv_layer will be None if it could not be created, this usually occurs when mesh_obj already has 8
+            # (the maximum) uv maps.
+            # We could copy all of an existing UV Layer's data (uv, pin_uv and select) into ndarrays and restore them
+            # later, though this wouldn't account for any custom data added by addons.
+            raise RuntimeError("Cannot loop decimate {} as a new uv map could not be created, it may already have the maximum (8) number of uv maps".format(mesh_obj))
+
+        # len(vert_uv_layer.data) == len(loops)
+        vert_uvs = np.empty(len(loops) * 2, dtype=uv_type)
+        # View the uvs as np.uintc and set the vertex indices into the data according to the slice
+        vert_uvs.view(vertex_index_type)[view_slice] = loop_vertex_indices
+        # Set the uvs of the uv map
+        vert_uv_layer.data.foreach_set('uv', vert_uvs)
+
+        # decimate N times, n/N% each time, and observe the result to get a list of leftover verts (the ones decimated)
+        iterations = 100
+        # If a vertex is never decimated, it will have a weight of zero
+        # If a vertex is immediately decimated, it will have a weight of close to one
+        weights_np = np.zeros(len(mesh_obj.data.vertices))
+
+        # FIXME: We need to disable other modifiers that alter geometry because those will affect the evaluated_get!
+        depsgraph = context.evaluated_depsgraph_get()
+        mesh_decimated = mesh_obj.evaluated_get(depsgraph)
+        last_remaining_vertex_indices = loop_vertex_indices
+        # Start at almost no decimation (ratio of almost 1) and gradually decrease the ratio so that more
+        # decimation occurs with each iteration
+        for i in range(iterations - 1, 0, -1):
+            ith_ratio = (i / iterations)
+            mod.ratio = ith_ratio
+            # Update for the new ratio
+            depsgraph.update()
+            decimated_uv_layer = mesh_decimated.data.uv_layers['CATS Vert']
+            decimated_uvs = np.empty(len(decimated_uv_layer.data) * 2, dtype=uv_type)
+            decimated_uv_layer.data.foreach_get('uv', decimated_uvs)
+            remaining_vertex_indices = decimated_uvs.view(vertex_index_type)[view_slice]
+
+            # TODO: Might be faster to set(remaining_vertex_indices.tolist()) and use Python Set methods with
+            #  iteration like the original implementation
+
+            # Since we only care about when we first find that a vertex has been decimated, we can compare
+            # against the remaining vertex indices from the last iteration instead of the full list each time.
+            # This speeds things up as the decimation ratio increases and the number of remaining vertices decreases.
+            indices_decimated = np.setdiff1d(last_remaining_vertex_indices, remaining_vertex_indices)
+            # print(f'indices decimated at {ith_ratio}: {(indices_decimated.tolist()}')
+            # There's no guarantee that a vertex will continue to always be removed once a ratio has been reached that
+            # removes that vertex, a vertex may re-appear again at a smaller ratio (more decimation).
+            # We therefore get the current weights and ensure we don't set a smaller value than the existing value.
+            current_weights = weights_np[indices_decimated]
+            max_of_weights = np.maximum(ith_ratio, current_weights)
+            # Update the weights
+            weights_np[indices_decimated] = max_of_weights
+            # Update the array of remaining vertex indices for the next iteration
+            last_remaining_vertex_indices = remaining_vertex_indices
+
+        # TODO: Probably faster to convert to Python array before iterating, though ideally, we would only work with
+        #  ndarrays until we actually need a Python Set
+        weights = {idx: weight for idx, weight in enumerate(weights_np)}
+
+        # Remove the modifier
+        mesh_obj.modifiers.remove(mod)
+        # Remove the uv map
+        mesh_obj.data.uv_layers.remove(vert_uv_layer)
+
+        return weights
+
     def decimate(self, context):
         print('START DECIMATION')
         Common.set_default_stage()
@@ -595,36 +701,7 @@ class AutoDecimateButton(bpy.types.Operator):
                 Common.switch('OBJECT')
             else:
                 # Loop
-                depsgraph = context.evaluated_depsgraph_get()
-
-                # create a dict() of vert cordinate to index
-                mod = mesh_obj.modifiers.new("Decimate", 'DECIMATE')
-                mod.use_symmetry = True
-                mod.symmetry_axis = 'X'
-                # Dark magic... encode the vert index into the 'red' channel of a vertex color map
-                # col is a float in range [0.0, 1.0], so we can encode the idx into the lower 23b
-                mesh_obj.data.vertex_colors.new(name='CATS Vert', do_init=False)
-                for vertex in mesh_obj.data.vertices:
-                    mesh_obj.data.vertex_colors['CATS Vert'].data[vertex.index].color[0] = struct.unpack('f', struct.pack('I', vertex.index))[0]
-
-                # decimate N times, n/N% each time, and observe the result to get a list of leftover verts (the ones decimated)
-                iterations = 100
-                weights = dict()
-
-                for i in range(1, iterations):
-                    mod.ratio = (i/iterations)
-                    bpy.ops.object.mode_set(mode="EDIT")
-                    bpy.ops.object.mode_set(mode="OBJECT")
-                    mesh_decimated = mesh_obj.evaluated_get(depsgraph)
-                    for vert in mesh_decimated.data.vertices:
-                        idx = struct.unpack('I', struct.pack('f',
-                                mesh_obj.data.vertex_colors['CATS Vert'].data[vert.index].color[0]))[0]
-                        if not idx in weights:
-                            weights[idx] = 1 - (i/iterations)
-                for i in range(0,len(mesh_obj.data.vertices)):
-                    if not i in weights:
-                        weights[i] = 0.0
-
+                weights = self._get_loop_decimate_weights(context, mesh_obj)
                 print(weights)
                 print(len(weights))
 
