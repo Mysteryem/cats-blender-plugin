@@ -511,6 +511,88 @@ class AutoDecimateButton(bpy.types.Operator):
 
         return weights
 
+    # TODO: If a mesh is entirely made up of loose polygons (every polygon has its own vertices instead of sharing
+    #  the vertices of its neighbours), this will be very slow. Face selection mode and bpy.ops.mesh.select_loose() may
+    #  be useful since I don't see an is_loose attribute of individual polygons.
+    # TODO: Skip loose edges
+    # Note: Assumes the passed in mesh_obj is the currently active and only selected object
+    @staticmethod
+    def _get_loop_decimate_edge_loops(mesh_obj):
+        edges = mesh_obj.data.edges
+        edges_left_to_select = set(range(len(edges)))
+        edge_loops = []
+
+        # When an edge is manifold geometry, if neither of its vertices are in 4 edges then the edge loop it is
+        # a part of contains only itself.
+
+        # First find all edges which are manifold
+        # Get edge_indices of all loops
+        loops = mesh_obj.data.loops
+        loop_edges = np.empty(len(loops), dtype=np.uintc)
+        loops.foreach_get('edge_index', loop_edges)
+        # Count the number of times each edge index appears in a loop
+        num_loops_edge_is_in = np.bincount(loop_edges, minlength=len(mesh_obj.data.edges))
+        # To be manifold geometry, an edge must be in 2 loops
+        edge_is_manifold = num_loops_edge_is_in == 2
+
+        # Get vertex indices of all loops, these get flattened, e.g. [(0, 1), (2, 0), (2, 1)] becomes [0, 1, 2, 0, 2, 1]
+        edge_verts = np.empty(len(edges) * 2, dtype=np.uintc)
+        edges.foreach_get('vertices', edge_verts)
+        # Count the number of times each vertex appears in an edge
+        num_edges_vert_is_in = np.bincount(edge_verts, minlength=len(mesh_obj.data.vertices))
+        # FIXME: manifold n-gons (5 or more sides) change this, maybe we can skip all edges in n-gons or check later if
+        #  the edge is in an n-gon (i.e., a vert is considered connecting if it's in an n-gon...but only some of the
+        #  time?)
+        # A vertex in manifold geometry only connects two of its edges into an edge loop if it is in exactly 4 edges
+        vert_is_non_connecting_if_manifold = num_edges_vert_is_in != 4
+
+        # Use the vertex indices of each edge to index vert_is_non_connecting_if_manifold
+        edge_verts_non_connecting_if_manifold = vert_is_non_connecting_if_manifold[edge_verts]
+        # Unflatten the edge_verts and get whether both vertices in each pair are non-connecting
+        edge_is_alone_in_edge_loop_if_manifold = edge_verts_non_connecting_if_manifold.reshape(-1, 2).all(axis=1)
+
+        # Combine whether an edge is manifold and whether it's the only edge in its edge loop
+        edge_is_alone_in_edge_loop = np.logical_and(edge_is_alone_in_edge_loop_if_manifold, edge_is_manifold, out=edge_is_manifold)
+
+        # Get the indices of each edge that we now know must be alone in its edge loop
+        edge_is_alone_in_edge_loop_idx = edge_is_alone_in_edge_loop.nonzero()[0]
+        # Converting to a list and iterating that instead of the ndarray is usually a bit faster
+        edge_is_alone_in_edge_loop_idx_list = edge_is_alone_in_edge_loop_idx.tolist()
+
+        # Remove the edges from the set of edges left to select
+        edges_left_to_select.difference_update(edge_is_alone_in_edge_loop_idx_list)
+
+        # Add the edge loops for these edges
+        edge_loops.extend((edge_idx,) for edge_idx in edge_is_alone_in_edge_loop_idx_list)
+
+        # Enter EDIT mode and set up EDGE selection mode and clear the current selection
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_mode(type='EDGE')
+        bpy.ops.mesh.select_all(action="DESELECT")
+        # Create bmesh from edit mesh
+        bm = bmesh.from_edit_mesh(mesh_obj.data)
+        bm.select_mode = {'EDGE'}
+        # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges and add to the edge loops
+        for edge in bm.edges:
+            edge_index = edge.index
+            if edge_index not in edges_left_to_select:
+                continue
+            else:
+                edge.select = True
+                # TODO: Maybe we can do something with loop.vert.link_edges, see https://blender.stackexchange.com/questions/79988/bmesh-get-edge-loop
+                bpy.ops.mesh.loop_multi_select(ring=False)
+                edge_loop = [edge for edge in bm.edges if edge.select]
+                edge_loop_i = tuple(edge.index for edge in edge_loop)
+                edge_loops.append(edge_loop_i)
+                print("Found edge loop: {}".format(edge_loop_i))
+                # All the edges in this loop have been selected, so remove them from the set of edges left to
+                # select
+                edges_left_to_select.difference_update(edge_loop_i)
+                for edge_in_loop in edge_loop:
+                    edge_in_loop.select = False
+        bpy.ops.object.mode_set(mode="OBJECT")
+        return edge_loops
+
     def decimate(self, context):
         print('START DECIMATION')
         Common.set_default_stage()
@@ -711,39 +793,8 @@ class AutoDecimateButton(bpy.types.Operator):
                     for idx, _ in newweights.items():
                         weights[idx] = max(weights[idx], newweights[idx])
 
-                edges_left_to_select = set(range(len(mesh_obj.data.edges)))
-                edge_loops = []
+                edge_loops = self._get_loop_decimate_edge_loops(mesh_obj)
 
-                # TODO: Count the number of edges each vertex is in, if we pick an edge and both of its vertices
-                #  are not in exactly 4 edges, then the edge loop for that edge is only the edge on its own. By doing
-                #  this, we can skip checking these edges for edge loops, this should drastically increase the speed
-                #  of meshes with many triangles.
-                # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges and add to the edge loops
-                # Enter EDIT mode and set up EDGE selection mode and clear the current selection
-                bpy.ops.object.mode_set(mode="EDIT")
-                bpy.ops.mesh.select_mode(type='EDGE')
-                bpy.ops.mesh.select_all(action="DESELECT")
-                #
-                bm = bmesh.from_edit_mesh(mesh_obj.data)
-                bm.select_mode = {'EDGE'}
-                #
-                for edge in bm.edges:
-                    edge_index = edge.index
-                    if edge_index not in edges_left_to_select:
-                        continue
-                    else:
-                        edge.select = True
-                        bpy.ops.mesh.loop_multi_select(ring=False)
-                        edge_loop = [edge for edge in bm.edges if edge.select]
-                        edge_loop_i = tuple(edge.index for edge in edge_loop)
-                        edge_loops.append(edge_loop_i)
-                        print("Found edge loop: {}".format(edge_loop_i))
-                        # All the edges in this loop have been selected, so remove them from the set of edges left to
-                        # select
-                        edges_left_to_select.difference_update(edge_loop_i)
-                        for edge_in_loop in edge_loop:
-                            edge_in_loop.select = False
-                bpy.ops.object.mode_set(mode="OBJECT")
                 # from the new decimation vertex group, create a dict() of loops to sum of shape-importance (loops which contain texture edges put at the end)
                 # TODO: order needs to be usual -> texture boundaries -> mesh boundaries
                 bpy.ops.object.mode_set(mode="EDIT")
