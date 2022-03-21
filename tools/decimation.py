@@ -518,20 +518,40 @@ class AutoDecimateButton(bpy.types.Operator):
     # Note: Assumes the passed in mesh_obj is the currently active and only selected object
     @staticmethod
     def _get_loop_decimate_edge_loops(mesh_obj):
-        edges = mesh_obj.data.edges
+        me = mesh_obj.data
+
+        edges = me.edges
         edges_left_to_select = set(range(len(edges)))
         edge_loops = []
 
-        # When an edge is manifold geometry, if neither of its vertices are in 4 edges then the edge loop it is
-        # a part of contains only itself.
+        # When an edge is manifold geometry and not in an n-gon, if neither of its vertices are in 4 edges then the edge
+        # loop it is a part of contains only itself. This allows us to quickly find the edge loops for triangulated
+        # parts of a mesh.
 
-        # First find all edges which are manifold
+        # First find all ngons
+        polygons = me.polygons
+        # Get loop totals to find which polygons are ngons
+        poly_loop_totals = np.empty(len(polygons), dtype=np.uintc)
+        polygons.foreach_get('loop_total', poly_loop_totals)
+        poly_is_ngon = poly_loop_totals > 4
+        # Repeat whether the poly is an ngon to match the loops
+        loop_is_in_ngon = np.repeat(poly_is_ngon, poly_loop_totals)
+
         # Get edge_indices of all loops
-        loops = mesh_obj.data.loops
+        loops = me.loops
         loop_edges = np.empty(len(loops), dtype=np.uintc)
         loops.foreach_get('edge_index', loop_edges)
+
+        # Get indices of all edges in ngons
+        edges_in_ngons = loop_edges[loop_is_in_ngon]
+
+        # Create a bool array for each edge which is True when the edge is in an ngon
+        edge_is_not_in_ngon = np.ones(len(edges), dtype=bool)
+        edge_is_not_in_ngon[edges_in_ngons] = False
+
+        # Next find all edges which are manifold
         # Count the number of times each edge index appears in a loop
-        num_loops_edge_is_in = np.bincount(loop_edges, minlength=len(mesh_obj.data.edges))
+        num_loops_edge_is_in = np.bincount(loop_edges, minlength=len(me.edges))
         # To be manifold geometry, an edge must be in 2 loops
         edge_is_manifold = num_loops_edge_is_in == 2
 
@@ -539,10 +559,8 @@ class AutoDecimateButton(bpy.types.Operator):
         edge_verts = np.empty(len(edges) * 2, dtype=np.uintc)
         edges.foreach_get('vertices', edge_verts)
         # Count the number of times each vertex appears in an edge
-        num_edges_vert_is_in = np.bincount(edge_verts, minlength=len(mesh_obj.data.vertices))
-        # FIXME: manifold n-gons (5 or more sides) change this, maybe we can skip all edges in n-gons or check later if
-        #  the edge is in an n-gon (i.e., a vert is considered connecting if it's in an n-gon...but only some of the
-        #  time?)
+        num_edges_vert_is_in = np.bincount(edge_verts, minlength=len(me.vertices))
+
         # A vertex in manifold geometry only connects two of its edges into an edge loop if it is in exactly 4 edges
         vert_is_non_connecting_if_manifold = num_edges_vert_is_in != 4
 
@@ -551,8 +569,12 @@ class AutoDecimateButton(bpy.types.Operator):
         # Unflatten the edge_verts and get whether both vertices in each pair are non-connecting
         edge_is_alone_in_edge_loop_if_manifold = edge_verts_non_connecting_if_manifold.reshape(-1, 2).all(axis=1)
 
-        # Combine whether an edge is manifold and whether it's the only edge in its edge loop
-        edge_is_alone_in_edge_loop = np.logical_and(edge_is_alone_in_edge_loop_if_manifold, edge_is_manifold, out=edge_is_manifold)
+        # Combine whether an edge is manifold, whether it's the only edge in its edge loop and whether it's not in an
+        # ngon
+        # np.logical_and only acts on two arrays at a time, but we can use np.logical_and.reduce to repeat the execution
+        to_reduce = (edge_is_alone_in_edge_loop_if_manifold, edge_is_manifold, edge_is_not_in_ngon)
+        # out is optional, but has to be either the first or second array since those are the first used
+        edge_is_alone_in_edge_loop = np.logical_and.reduce(to_reduce, out=to_reduce[0])
 
         # Get the indices of each edge that we now know must be alone in its edge loop
         edge_is_alone_in_edge_loop_idx = edge_is_alone_in_edge_loop.nonzero()[0]
@@ -565,31 +587,81 @@ class AutoDecimateButton(bpy.types.Operator):
         # Add the edge loops for these edges
         edge_loops.extend((edge_idx,) for edge_idx in edge_is_alone_in_edge_loop_idx_list)
 
+        # We can get different edge loops if we start an edge loop from an edge in an ngon vs an edge outside an ngon.
+        # For consistency, we will skip all ngon edges in the initial edge loop selection and do them last:
+        #  ┌────┬────┐  ┌────┬────┐
+        #  │    │    │  │    x    │  Selecting an edge loop starting from 'x' will select 'x' and 'a'
+        #  ├────┼────┤  ├────┼────┤  Selecting an edge loop starting from 'a' will select 'a' and 'b'
+        #  │    │    │  │    a    │  Selecting an edge loop starting from 'b' will select 'a' and 'b'
+        #  │    ├────┤  │    ├────┤  Selecting an edge loop starting from 'y' will select 'b' and 'y'
+        #  │    │    │  │    b    │
+        #  ├────┼────┤  ├────┼────┤
+        #  │    │    │  │    y    │
+        #  └────┴────┘  └────┴────┘
+        edges_in_ngons_set = set(edges_in_ngons.tolist())
         # Enter EDIT mode and set up EDGE selection mode and clear the current selection
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_mode(type='EDGE')
         bpy.ops.mesh.select_all(action="DESELECT")
         # Create bmesh from edit mesh
-        bm = bmesh.from_edit_mesh(mesh_obj.data)
+        bm = bmesh.from_edit_mesh(me)
         bm.select_mode = {'EDGE'}
+        bm_edges = bm.edges
         # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges and add to the edge loops
-        for edge in bm.edges:
-            edge_index = edge.index
-            if edge_index not in edges_left_to_select:
+        for edge in bm_edges:
+            start_edge_index = edge.index
+            if start_edge_index not in edges_left_to_select or start_edge_index in edges_in_ngons_set:
                 continue
             else:
                 edge.select = True
-                # TODO: Maybe we can do something with loop.vert.link_edges, see https://blender.stackexchange.com/questions/79988/bmesh-get-edge-loop
+                # TODO: Maybe we should get the next element in edges_left_to_select and go by index?
+                # TODO: What is bpy.ops.mesh.loop_select?
                 bpy.ops.mesh.loop_multi_select(ring=False)
-                edge_loop = [edge for edge in bm.edges if edge.select]
+                # TODO: If we are sure that we won't select any previously selected edges, we could iterate through
+                #  indices in edges_left_to_select instead
+                #  And compare the length of the loop we find against me.total_edge_sel, they should be the
+                #  same. (if they're not, we can then find the selected edges in bm.edges
+                edge_loop = [edge for edge in bm_edges if edge.select]
                 edge_loop_i = tuple(edge.index for edge in edge_loop)
                 edge_loops.append(edge_loop_i)
                 print("Found edge loop: {}".format(edge_loop_i))
                 # All the edges in this loop have been selected, so remove them from the set of edges left to
                 # select
                 edges_left_to_select.difference_update(edge_loop_i)
+                # And deselect the edges that were selected
                 for edge_in_loop in edge_loop:
                     edge_in_loop.select = False
+        # Now the only edges left are those in ngons. When selecting edge loops from these, we make extra checks that
+        # each selected edge hasn't been selected before.
+        bm_edges.ensure_lookup_table()
+        while len(edges_left_to_select) > 0:
+            start_edge_index = next(iter(edges_left_to_select))
+            bm_edges[start_edge_index].select = True
+            bpy.ops.mesh.loop_multi_select(ring=False)
+            tentative_edge_loop = list(filter(lambda bm_edge: bm_edge.select, (bm_edges[edge] for edge in edges_left_to_select)))
+            all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
+            # If we haven't reselected any edges, then we can add the edges as a full loop
+            if all_edges_are_new:
+                edge_loop_i = tuple(edge.index for edge in tentative_edge_loop)
+                edge_loops.append(edge_loop_i)
+                print("Found ngon originating edge loop: {}".format(edge_loop_i))
+                edges_left_to_select.difference_update(edge_loop_i)
+                for edge_in_loop in tentative_edge_loop:
+                    edge_in_loop.select = False
+            # Some edges in the edge loop are already part of another edge loop, so we'll break each of the newly
+            # selected edges into loops on their own.
+            else:
+                # We need to deselect all edges, we know the edges in tentative_edge_loop are selected, but there
+                # are other edges that have been selected that we don't know about
+                bpy.ops.mesh.select_all(action='DESELECT')
+                print("Found ngon edge loop containing repeats originating from: {}".format(start_edge_index))
+                # Add each edge as a loop on its own
+                for edge in tentative_edge_loop:
+                    idx = edge.index
+                    edge_loop_i = (idx, )
+                    edge_loops.append(edge_loop_i)
+                    print("Found edge loop from single ngon edge: {}".format(edge_loop_i))
+                    edges_left_to_select.remove(idx)
         bpy.ops.object.mode_set(mode="OBJECT")
         return edge_loops
 
