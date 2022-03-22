@@ -599,6 +599,9 @@ class AutoDecimateButton(bpy.types.Operator):
         #  │    │    │  │    y    │
         #  └────┴────┘  └────┴────┘
         edges_in_ngons_set = set(edges_in_ngons.tolist())
+        non_ngon_edges_left_to_select = edges_left_to_select - edges_in_ngons_set
+        num_edges = len(edges)
+        half_num_edges = num_edges // 2
         # Enter EDIT mode and set up EDGE selection mode and clear the current selection
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_mode(type='EDGE')
@@ -607,33 +610,43 @@ class AutoDecimateButton(bpy.types.Operator):
         bm = bmesh.from_edit_mesh(me)
         bm.select_mode = {'EDGE'}
         bm_edges = bm.edges
-        # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges and add to the edge loops
-        for edge in bm_edges:
-            start_edge_index = edge.index
-            if start_edge_index not in edges_left_to_select or start_edge_index in edges_in_ngons_set:
-                continue
-            else:
-                edge.select = True
-                # TODO: Maybe we should get the next element in edges_left_to_select and go by index?
-                # TODO: What is bpy.ops.mesh.loop_select?
-                bpy.ops.mesh.loop_multi_select(ring=False)
-                # TODO: If we are sure that we won't select any previously selected edges, we could iterate through
-                #  indices in edges_left_to_select instead
-                #  And compare the length of the loop we find against me.total_edge_sel, they should be the
-                #  same. (if they're not, we can then find the selected edges in bm.edges
+        # Ensure access by index is available
+        bm_edges.ensure_lookup_table()
+        # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges
+        # and add to the edge loops
+        while len(non_ngon_edges_left_to_select) > 0:
+            start_edge_index = next(iter(non_ngon_edges_left_to_select))
+            edge = bm_edges[start_edge_index]
+            edge.select = True
+            # TODO: What is bpy.ops.mesh.loop_select?
+            bpy.ops.mesh.loop_multi_select(ring=False)
+            # Iterating edges_left_to_select of length N and getting edges by index is roughly the same speed as
+            # iterating bm_edges of length 2N
+            if half_num_edges < len(edges_left_to_select):
                 edge_loop = [edge for edge in bm_edges if edge.select]
-                edge_loop_i = tuple(edge.index for edge in edge_loop)
-                edge_loops.append(edge_loop_i)
-                print("Found edge loop: {}".format(edge_loop_i))
-                # All the edges in this loop have been selected, so remove them from the set of edges left to
-                # select
-                edges_left_to_select.difference_update(edge_loop_i)
-                # And deselect the edges that were selected
-                for edge_in_loop in edge_loop:
-                    edge_in_loop.select = False
+            else:
+                to_bm_edge = (bm_edges[idx] for idx in edges_left_to_select)
+                tentative_edge_loop = [edge for edge in to_bm_edge if edge.select]
+                # TODO: Try and figure out if it's possible to reselect an edge, I haven't found it happen once
+                # It might be possible to reselect an edge, I'm not sure
+                all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
+                if all_edges_are_new:
+                    edge_loop = tentative_edge_loop
+                else:
+                    edge_loop = [edge for edge in bm_edges if edge.select]
+            edge_loop_i = tuple(edge.index for edge in edge_loop)
+            edge_loops.append(edge_loop_i)
+            print("Found edge loop: {}".format(edge_loop_i))
+            # All the edges in this loop have been selected, so remove them from the set of edges left to
+            # select
+            edges_left_to_select.difference_update(edge_loop_i)
+            # We also need to remove the edges from the initial edge loop start edges
+            non_ngon_edges_left_to_select.difference_update(edge_loop_i)
+            # And deselect the edges that were selected
+            for edge_in_loop in edge_loop:
+                edge_in_loop.select = False
         # Now the only edges left are those in ngons. When selecting edge loops from these, we make extra checks that
         # each selected edge hasn't been selected before.
-        bm_edges.ensure_lookup_table()
         while len(edges_left_to_select) > 0:
             start_edge_index = next(iter(edges_left_to_select))
             bm_edges[start_edge_index].select = True
