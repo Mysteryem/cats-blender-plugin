@@ -608,19 +608,23 @@ class AutoDecimateButton(bpy.types.Operator):
         bm.select_mode = {'EDGE'}
         bm_edges = bm.edges
 
-        bm_edges_left_to_select = set()
-        non_ngon_bm_edges_left_to_select = set()
+        bm_edges_left_to_select_dict = {}
+        non_ngon_bm_edges_left_to_select_dict = {}
         for edge in bm_edges:
             idx = edge.index
             if idx in edges_left_to_select:
                 if idx not in edges_in_ngons_set:
-                    non_ngon_bm_edges_left_to_select.add(edge)
-                bm_edges_left_to_select.add(edge)
+                    non_ngon_bm_edges_left_to_select_dict[idx] = edge
+                bm_edges_left_to_select_dict[idx] = edge
 
+        # TODO: Find areas that are not attached to each other, we can then create a set of edges for each and iterate
+        #  each section separately as we know that there will be no edge loops that go between separate sections
         # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges
         # and add to the edge loops
+        non_ngon_bm_edges_left_to_select = non_ngon_bm_edges_left_to_select_dict.values()
+        bm_edges_left_to_select = bm_edges_left_to_select_dict.values()
         # TODO: This loop is still by far the slowest part
-        while non_ngon_bm_edges_left_to_select:
+        while non_ngon_bm_edges_left_to_select_dict:
             edge = next(iter(non_ngon_bm_edges_left_to_select))
             edge.select = True
             bpy.ops.mesh.loop_multi_select(ring=False)
@@ -636,15 +640,21 @@ class AutoDecimateButton(bpy.types.Operator):
             all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
             if all_edges_are_new:
                 edge_loop = tentative_edge_loop
+                edge_loop_i = tuple(edge.index for edge in edge_loop)
+                for idx in edge_loop_i:
+                    del bm_edges_left_to_select_dict[idx]
+                    if idx in non_ngon_bm_edges_left_to_select_dict:
+                        del non_ngon_bm_edges_left_to_select_dict[idx]
             else:
                 edge_loop = [edge for edge in bm_edges if edge.select]
-            edge_loop_i = tuple(edge.index for edge in edge_loop)
+                edge_loop_i = tuple(edge.index for edge in edge_loop)
+                for idx in edge_loop_i:
+                    if idx in bm_edges_left_to_select_dict:
+                        del bm_edges_left_to_select_dict[idx]
+                    if idx in non_ngon_bm_edges_left_to_select_dict:
+                        del non_ngon_bm_edges_left_to_select_dict[idx]
             edge_loops.append(edge_loop_i)
             print("Found edge loop: {}".format(edge_loop_i))
-            # All the edges in this loop have been selected, so remove them from the set of edges left to select
-            bm_edges_left_to_select.difference_update(edge_loop)
-            # We also need to remove the edges from the initial edge loop start edges
-            non_ngon_bm_edges_left_to_select.difference_update(edge_loop)
             # And deselect the edges that were selected
             for edge_in_loop in edge_loop:
                 edge_in_loop.select = False
@@ -652,18 +662,21 @@ class AutoDecimateButton(bpy.types.Operator):
         # each selected edge hasn't been selected before.
         # Ensure access by index is available
         bm_edges.ensure_lookup_table()
-        while bm_edges_left_to_select:
-            start_edge = next(iter(bm_edges_left_to_select))
+        while bm_edges_left_to_select_dict:
+            edges_iter = iter(bm_edges_left_to_select_dict.values())
+            start_edge = next(edges_iter)
             start_edge.select = True
             bpy.ops.mesh.loop_multi_select(ring=False)
-            tentative_edge_loop = list(filter(lambda bm_edge: bm_edge.select, bm_edges_left_to_select))
+            tentative_edge_loop = [bm_edge for bm_edge in edges_iter if bm_edge.select]
+            tentative_edge_loop.append(start_edge)
             all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
             # If we haven't reselected any edges, then we can add the edges as a full loop
             if all_edges_are_new:
                 edge_loop_i = tuple(edge.index for edge in tentative_edge_loop)
                 edge_loops.append(edge_loop_i)
                 print("Found ngon originating edge loop: {}".format(edge_loop_i))
-                bm_edges_left_to_select.difference_update(tentative_edge_loop)
+                for idx in edge_loop_i:
+                    del bm_edges_left_to_select_dict[idx]
                 for edge_in_loop in tentative_edge_loop:
                     edge_in_loop.select = False
             # Some edges in the edge loop are already part of another edge loop, so we'll break each of the newly
@@ -679,7 +692,8 @@ class AutoDecimateButton(bpy.types.Operator):
                     edge_loop_i = (idx, )
                     edge_loops.append(edge_loop_i)
                     print("Found edge loop from single ngon edge: {}".format(edge_loop_i))
-                    bm_edges_left_to_select.remove(edge)
+                    if idx in bm_edges_left_to_select_dict:
+                        del bm_edges_left_to_select_dict[idx]
         bpy.ops.object.mode_set(mode="OBJECT")
         return edge_loops
 
