@@ -518,6 +518,7 @@ class AutoDecimateButton(bpy.types.Operator):
     # Note: Assumes the passed in mesh_obj is the currently active and only selected object
     @staticmethod
     def _get_loop_decimate_edge_loops(mesh_obj):
+        timings = {'start': perf_counter()}
         me = mesh_obj.data
 
         edges = me.edges
@@ -599,6 +600,7 @@ class AutoDecimateButton(bpy.types.Operator):
         #  │    │    │  │    y    │
         #  └────┴────┘  └────┴────┘
         edges_in_ngons_set = set(edges_in_ngons.tolist())
+        timings['pre edit mode done'] = perf_counter()
         # Enter EDIT mode and set up EDGE selection mode and clear the current selection
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_mode(type='EDGE')
@@ -607,93 +609,122 @@ class AutoDecimateButton(bpy.types.Operator):
         bm = bmesh.from_edit_mesh(me)
         bm.select_mode = {'EDGE'}
         bm_edges = bm.edges
-
-        bm_edges_left_to_select_dict = {}
-        non_ngon_bm_edges_left_to_select_dict = {}
-        for edge in bm_edges:
-            idx = edge.index
-            if idx in edges_left_to_select:
-                if idx not in edges_in_ngons_set:
-                    non_ngon_bm_edges_left_to_select_dict[idx] = edge
-                bm_edges_left_to_select_dict[idx] = edge
-
-        # TODO: Find areas that are not attached to each other, we can then create a set of edges for each and iterate
-        #  each section separately as we know that there will be no edge loops that go between separate sections
-        # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges
-        # and add to the edge loops
-        non_ngon_bm_edges_left_to_select = non_ngon_bm_edges_left_to_select_dict.values()
-        bm_edges_left_to_select = bm_edges_left_to_select_dict.values()
-        # TODO: This loop is still by far the slowest part
-        while non_ngon_bm_edges_left_to_select_dict:
-            edge = next(iter(non_ngon_bm_edges_left_to_select))
-            edge.select = True
-            bpy.ops.mesh.loop_multi_select(ring=False)
-            # Iterating edges_left_to_select of length N and getting edges by index is roughly the same speed as
-            # iterating bm_edges of length 2N
-            # TODO: Can we do anything with iterating the edges in order? i.e., can we assume that all the other
-            #  selected edges must be in bm_edges[start_edge_index + 1]? It may help to use sortedset to make the sorted
-            #  behaviour clear in the code. A possible issue is that we skip over ngon edges, maybe we could search
-            #  through skipped ngon edges and bm_edges[start_edge_index + 1] when finding a tentative edge loop?
-            tentative_edge_loop = [edge for edge in bm_edges_left_to_select if edge.select]
-            # TODO: Try and figure out if it's possible to reselect an edge, I haven't found it happen once
-            # It might be possible to reselect an edge, I'm not sure
-            all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
-            if all_edges_are_new:
-                edge_loop = tentative_edge_loop
-                edge_loop_i = tuple(edge.index for edge in edge_loop)
-                for idx in edge_loop_i:
-                    del bm_edges_left_to_select_dict[idx]
-                    if idx in non_ngon_bm_edges_left_to_select_dict:
-                        del non_ngon_bm_edges_left_to_select_dict[idx]
-            else:
-                edge_loop = [edge for edge in bm_edges if edge.select]
-                edge_loop_i = tuple(edge.index for edge in edge_loop)
-                for idx in edge_loop_i:
-                    if idx in bm_edges_left_to_select_dict:
-                        del bm_edges_left_to_select_dict[idx]
-                    if idx in non_ngon_bm_edges_left_to_select_dict:
-                        del non_ngon_bm_edges_left_to_select_dict[idx]
-            edge_loops.append(edge_loop_i)
-            print("Found edge loop: {}".format(edge_loop_i))
-            # And deselect the edges that were selected
-            for edge_in_loop in edge_loop:
-                edge_in_loop.select = False
-        # Now the only edges left are those in ngons. When selecting edge loops from these, we make extra checks that
-        # each selected edge hasn't been selected before.
-        # Ensure access by index is available
+        # TODO: Can we hide all of the edges in edge_is_alone_in_edge_loop_idx_list so that we have a chance of creating
+        #  more, smaller areas? (hide them in advance with numpy! (and unhide everything else))
+        # Find areas that are not attached to each other, as we know there will be no edge loops that go between parts
+        # of the mesh that aren't attached
+        remaining_edge_idx_set = set(range(len(edges)))
+        remaining_edges_set = set(bm_edges)
+        linked_edges_dicts = []
+        non_ngon_linked_edges_dicts = []
         bm_edges.ensure_lookup_table()
-        while bm_edges_left_to_select_dict:
-            edges_iter = iter(bm_edges_left_to_select_dict.values())
-            start_edge = next(edges_iter)
-            start_edge.select = True
-            bpy.ops.mesh.loop_multi_select(ring=False)
-            tentative_edge_loop = [bm_edge for bm_edge in edges_iter if bm_edge.select]
-            tentative_edge_loop.append(start_edge)
-            all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
-            # If we haven't reselected any edges, then we can add the edges as a full loop
-            if all_edges_are_new:
-                edge_loop_i = tuple(edge.index for edge in tentative_edge_loop)
-                edge_loops.append(edge_loop_i)
-                print("Found ngon originating edge loop: {}".format(edge_loop_i))
-                for idx in edge_loop_i:
-                    del bm_edges_left_to_select_dict[idx]
-                for edge_in_loop in tentative_edge_loop:
-                    edge_in_loop.select = False
-            # Some edges in the edge loop are already part of another edge loop, so we'll break each of the newly
-            # selected edges into loops on their own.
-            else:
-                # We need to deselect all edges, we know the edges in tentative_edge_loop are selected, but there
-                # are other edges that have been selected that we don't know about
-                bpy.ops.mesh.select_all(action='DESELECT')
-                print("Found ngon edge loop containing repeats originating from: {}".format(start_edge.index))
-                # Add each edge as a loop on its own
-                for edge in tentative_edge_loop:
+        timings['find regions start'] = perf_counter()
+        while remaining_edge_idx_set:
+            # Select an edge
+            edge_idx = next(iter(remaining_edge_idx_set))
+            bm_edges[edge_idx].select = True
+            # Select all linked edges
+            bpy.ops.mesh.select_linked()
+            linked_edges_dict = {}
+            non_ngon_linked_edges_dict = {}
+            # Iterate the remaining edges and build dictionaries for the linked edges
+            for edge in remaining_edges_set:
+                if edge.select:
+                    # TODO: It might be faster to bpy.ops.mesh.select_all(action='DESELECT')
+                    edge.select = False
                     idx = edge.index
-                    edge_loop_i = (idx, )
-                    edge_loops.append(edge_loop_i)
-                    print("Found edge loop from single ngon edge: {}".format(edge_loop_i))
-                    if idx in bm_edges_left_to_select_dict:
+                    remaining_edge_idx_set.remove(idx)
+                    # Skip all edges that we know will be alone
+                    if idx in edges_left_to_select:
+                        linked_edges_dict[idx] = edge
+                        # We keep a separate dict for edges that aren't in ngons as we only want to start edge loops
+                        # from ngon edges once we've started edge loops from all the other edges, otherwise the edge
+                        # loops found may be inconsistent.
+                        if idx not in edges_in_ngons_set:
+                            non_ngon_linked_edges_dict[idx] = edge
+            remaining_edges_set.difference_update(linked_edges_dict.values())
+            linked_edges_dicts.append(linked_edges_dict)
+            non_ngon_linked_edges_dicts.append(non_ngon_linked_edges_dict)
+        #
+        timings['find loops start'] = perf_counter()
+        zipped_edge_dicts = zip(linked_edges_dicts, non_ngon_linked_edges_dicts)
+        for bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict in zipped_edge_dicts:
+            # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges
+            # and add to the edge loops
+            non_ngon_bm_edges_left_to_select = non_ngon_bm_edges_left_to_select_dict.values()
+            bm_edges_left_to_select = bm_edges_left_to_select_dict.values()
+            # TODO: This loop is still by far the slowest part
+            while non_ngon_bm_edges_left_to_select_dict:
+                edge = next(iter(non_ngon_bm_edges_left_to_select))
+                edge.select = True
+                bpy.ops.mesh.loop_multi_select(ring=False)
+                tentative_edge_loop = [edge for edge in bm_edges_left_to_select if edge.select]
+                # TODO: Try and figure out if it's possible to reselect an edge, I haven't found it happen once
+                # It might be possible to reselect an edge, I'm not sure
+                all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
+                if all_edges_are_new:
+                    edge_loop = tentative_edge_loop
+                    edge_loop_i = tuple(edge.index for edge in edge_loop)
+                    for idx in edge_loop_i:
                         del bm_edges_left_to_select_dict[idx]
+                        if idx in non_ngon_bm_edges_left_to_select_dict:
+                            del non_ngon_bm_edges_left_to_select_dict[idx]
+                else:
+                    edge_loop = [edge for edge in bm_edges if edge.select]
+                    edge_loop_i = tuple(edge.index for edge in edge_loop)
+                    for idx in edge_loop_i:
+                        if idx in bm_edges_left_to_select_dict:
+                            del bm_edges_left_to_select_dict[idx]
+                        if idx in non_ngon_bm_edges_left_to_select_dict:
+                            del non_ngon_bm_edges_left_to_select_dict[idx]
+                edge_loops.append(edge_loop_i)
+                print("Found edge loop: {}".format(edge_loop_i))
+                # And deselect the edges that were selected
+                for edge_in_loop in edge_loop:
+                    edge_in_loop.select = False
+            # Now the only edges left are those in ngons. When selecting edge loops from these, we make extra checks that
+            # each selected edge hasn't been selected before.
+            # Ensure access by index is available
+            while bm_edges_left_to_select_dict:
+                edges_iter = iter(bm_edges_left_to_select_dict.values())
+                start_edge = next(edges_iter)
+                start_edge.select = True
+                bpy.ops.mesh.loop_multi_select(ring=False)
+                tentative_edge_loop = [bm_edge for bm_edge in edges_iter if bm_edge.select]
+                tentative_edge_loop.append(start_edge)
+                all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
+                # If we haven't reselected any edges, then we can add the edges as a full loop
+                if all_edges_are_new:
+                    edge_loop_i = tuple(edge.index for edge in tentative_edge_loop)
+                    edge_loops.append(edge_loop_i)
+                    print("Found ngon originating edge loop: {}".format(edge_loop_i))
+                    for idx in edge_loop_i:
+                        del bm_edges_left_to_select_dict[idx]
+                    for edge_in_loop in tentative_edge_loop:
+                        edge_in_loop.select = False
+                # Some edges in the edge loop are already part of another edge loop, so we'll break each of the newly
+                # selected edges into loops on their own.
+                else:
+                    # We need to deselect all edges, we know the edges in tentative_edge_loop are selected, but there
+                    # are other edges that have been selected that we don't know about
+                    bpy.ops.mesh.select_all(action='DESELECT')
+                    print("Found ngon edge loop containing repeats originating from: {}".format(start_edge.index))
+                    # Add each edge as a loop on its own
+                    for edge in tentative_edge_loop:
+                        idx = edge.index
+                        edge_loop_i = (idx, )
+                        edge_loops.append(edge_loop_i)
+                        print("Found edge loop from single ngon edge: {}".format(edge_loop_i))
+                        if idx in bm_edges_left_to_select_dict:
+                            del bm_edges_left_to_select_dict[idx]
+        timings['edit mode finished'] = perf_counter()
+        last_name = None
+        last_seconds = None
+        for name, seconds in timings.items():
+            if last_name is not None and last_seconds is not None:
+                print('{} took {} seconds from {}'.format(name, seconds - last_seconds, last_name))
+            last_name = name
+            last_seconds = seconds
         bpy.ops.object.mode_set(mode="OBJECT")
         return edge_loops
 
