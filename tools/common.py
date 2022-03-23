@@ -262,6 +262,33 @@ def shape_key_remove_all(mesh_obj):
         mesh_obj.shape_key_clear()
 
 
+def add_uv_layer(mesh, name='UVMap', copy_from_active=True, raise_on_failure=True):
+    """Add a uv layer to a mesh.
+
+    The maximum number of uv layers a mesh can have is 8.
+
+    :return: The newly created uv layer or None if the uv layer could not be created and raise_on_failure=False."""
+    if version_2_79_or_older():
+        uv_texture = mesh.uv_textures.new(name=name)
+        if uv_texture is None:
+            to_return = None
+        else:
+            to_return = mesh.uv_layers[uv_texture.name]
+            if not copy_from_active:
+                # Matches the do_init=False behaviour of 2.80+
+                to_return.data.foreach_set('uv', np.zeros(len(to_return.data) * 2, dtype=np.single))
+    else:
+        to_return = mesh.uv_layers.new(name=name, do_init=copy_from_active)
+    if raise_on_failure and to_return is None:
+        if len(mesh.uv_layers) == 8:
+            message = "Could not create new uv layer {}. {} already has the maximum of 8 uv layers.".format(name, mesh)
+        else:
+            message = "Could not create new uv layer {} on {}.".format(name, mesh)
+        raise RuntimeError(message)
+    else:
+        return to_return
+
+
 def set_default_stage_old():
     switch('OBJECT')
     unhide_all()

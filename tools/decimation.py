@@ -445,7 +445,7 @@ class AutoDecimateButton(bpy.types.Operator):
         loops.foreach_get('vertex_index', loop_vertex_indices)
 
         # Create the uv map
-        vert_uv_layer = mesh_obj.data.uv_layers.new(name='CATS Vert', do_init=False)
+        vert_uv_layer = Common.add_uv_layer(mesh_obj.data, name='CATS Vert', copy_from_active=False)
         if not vert_uv_layer:
             # vert_uv_layer will be None if it could not be created, this usually occurs when mesh_obj already has 8
             # (the maximum) uv maps.
