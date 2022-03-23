@@ -662,16 +662,26 @@ class AutoDecimateButton(bpy.types.Operator):
             bm_edges_left_to_select = bm_edges_left_to_select_dict.values()
             all_bm_edges_in_region = bm_edges_left_to_select_dict.copy().values()
             region_timings['initial loop start'] = perf_counter()
-            # TODO: This loop is still by far the slowest part and for some reason, it gets slower when the mesh is
-            #  bigger, even if the size of this region (and therefore the number of iterations) is the same???
+            initial_loop_timings = {}
+            # This is by far the slowest part of this function
             while non_ngon_bm_edges_left_to_select_dict:
+                initial_loop_timing = {'start': perf_counter()}
                 edge = next(iter(non_ngon_bm_edges_left_to_select))
                 edge.select = True
+                initial_loop_timing['initial edge select'] = perf_counter()
+                # The more edges there are in the mesh, the slower this operator gets, hiding parts of the mesh that we
+                # know the edge loop won't be a part of doesn't affect the speed at all
+                # This is by far the slowest part
+                # TODO: Since this is a multi_select, we might be able to save time by selecting a single edge in each
+                #  region with edges remaining simultaneously and add an edge loop in each region at the same time.
+                #  Perhaps itertools.zip_longest would be useful (also sorting the dictionaries by length)
                 bpy.ops.mesh.loop_multi_select(ring=False)
+                initial_loop_timing['loop select op done'] = perf_counter()
                 tentative_edge_loop = [edge for edge in bm_edges_left_to_select if edge.select]
                 # TODO: Try and figure out if it's possible to reselect an edge, I haven't found it happen once
                 # It might be possible to reselect an edge, I'm not sure
                 all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
+                initial_loop_timing['edge loop got'] = perf_counter()
                 if all_edges_are_new:
                     edge_loop = tentative_edge_loop
                     edge_loop_i = tuple(edge.index for edge in edge_loop)
@@ -688,11 +698,25 @@ class AutoDecimateButton(bpy.types.Operator):
                             del bm_edges_left_to_select_dict[idx]
                         if idx in non_ngon_bm_edges_left_to_select_dict:
                             del non_ngon_bm_edges_left_to_select_dict[idx]
+                initial_loop_timing['create tuple and update dicts'] = perf_counter()
                 edge_loops.append(edge_loop_i)
                 # print("Found edge loop: {}".format(edge_loop_i))
                 # And deselect the edges that were selected
                 for edge_in_loop in edge_loop:
                     edge_in_loop.select = False
+                initial_loop_timing['done'] = perf_counter()
+                last_name = None
+                last_seconds = None
+                for name, seconds in initial_loop_timing.items():
+                    if last_name is not None:
+                        duration = seconds - last_seconds
+                        combined_key = last_name + ' to ' + name
+                        existing_duration = initial_loop_timings.setdefault(combined_key, 0)
+                        initial_loop_timings[combined_key] = existing_duration + duration
+                    last_name = name
+                    last_seconds = seconds
+            for name, seconds in initial_loop_timings.items():
+                print('{} took {} in total'.format(name, seconds))
             # Now the only edges left are those in ngons. When selecting edge loops from these, we make extra checks that
             # each selected edge hasn't been selected before.
             # Ensure access by index is available
@@ -750,6 +774,8 @@ class AutoDecimateButton(bpy.types.Operator):
                 print('{} took {} seconds from {}'.format(name, seconds - last_seconds, last_name))
             last_name = name
             last_seconds = seconds
+        # TODO: Maybe faster to unhide the edges through foreach_set
+        bpy.ops.mesh.reveal(select=False)
         bpy.ops.object.mode_set(mode="OBJECT")
         return edge_loops
 
