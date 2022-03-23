@@ -511,9 +511,6 @@ class AutoDecimateButton(bpy.types.Operator):
 
         return weights
 
-    # TODO: If a mesh is entirely made up of loose polygons (every polygon has its own vertices instead of sharing
-    #  the vertices of its neighbours), this will be very slow. Face selection mode and bpy.ops.mesh.select_loose() may
-    #  be useful since I don't see an is_loose attribute of individual polygons.
     # TODO: Skip loose edges
     # Note: Assumes the passed in mesh_obj is the currently active and only selected object
     @staticmethod
@@ -610,8 +607,7 @@ class AutoDecimateButton(bpy.types.Operator):
         bm = bmesh.from_edit_mesh(me)
         bm.select_mode = {'EDGE'}
         bm_edges = bm.edges
-        # TODO: Can we hide all of the edges in edge_is_alone_in_edge_loop_idx_list so that we have a chance of creating
-        #  more, smaller areas? (hide them in advance with numpy! (and unhide everything else))
+
         # Find areas that are not attached to each other, as we know there will be no edge loops that go between parts
         # of the mesh that aren't attached
         remaining_edge_idx_set = set(range(len(edges)))
@@ -651,46 +647,48 @@ class AutoDecimateButton(bpy.types.Operator):
                 non_ngon_linked_edges_dicts.append(non_ngon_linked_edges_dict)
         print('found {} separate edge loop regions'.format(len(linked_edges_dicts)))
         timings['find loops start'] = perf_counter()
-        zipped_edge_dicts = zip(linked_edges_dicts, non_ngon_linked_edges_dicts)
-        # TODO: Try hiding all but the active region, maybe it will speed up bpy.ops.mesh.loop_multi_select(ring=False)
-        for bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict in zipped_edge_dicts:
-            reselected_edges = 0
-            region_timings = {'start': perf_counter()}
-            # select an edge we haven't select yet, select edge loop, remove all selected edges from the set of all edges
-            # and add to the edge loops
-            non_ngon_bm_edges_left_to_select = non_ngon_bm_edges_left_to_select_dict.values()
-            bm_edges_left_to_select = bm_edges_left_to_select_dict.values()
-            all_bm_edges_in_region = bm_edges_left_to_select_dict.copy().values()
-            region_timings['initial loop start'] = perf_counter()
-            initial_loop_timings = {}
-            # This is by far the slowest part of this function
-            while non_ngon_bm_edges_left_to_select_dict:
-                initial_loop_timing = {'start': perf_counter()}
-                edge = next(iter(non_ngon_bm_edges_left_to_select))
+        non_ngon_zip = [
+            (linked_edges_dict, non_ngon_linked_edges_dict, linked_edges_dict.copy().values())
+            for linked_edges_dict, non_ngon_linked_edges_dict in zip(linked_edges_dicts, non_ngon_linked_edges_dicts)
+            if non_ngon_linked_edges_dict
+        ]
+        # Non ngon edges first as they are much more consistent at not re-selecting edges
+        while non_ngon_zip:
+            # Select an edge from each
+            for bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, _ in non_ngon_zip:
+                edge = next(iter(non_ngon_bm_edges_left_to_select_dict.values()))
                 edge.select = True
-                initial_loop_timing['initial edge select'] = perf_counter()
-                # The more edges there are in the mesh, the slower this operator gets, hiding parts of the mesh that we
-                # know the edge loop won't be a part of doesn't affect the speed at all
-                # This is by far the slowest part
-                # TODO: Since this is a multi_select, we might be able to save time by selecting a single edge in each
-                #  region with edges remaining simultaneously and add an edge loop in each region at the same time.
-                #  Perhaps itertools.zip_longest would be useful (also sorting the dictionaries by length)
-                bpy.ops.mesh.loop_multi_select(ring=False)
-                initial_loop_timing['loop select op done'] = perf_counter()
+            # Loop select
+            bpy.ops.mesh.loop_multi_select(ring=False)
+            # Find the loops in each region
+            # Find tentative edge loops
+            total_tentative_edges = 0
+            tentative_edge_loops = []
+            for bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, _ in non_ngon_zip:
+                bm_edges_left_to_select = bm_edges_left_to_select_dict.values()
                 tentative_edge_loop = [edge for edge in bm_edges_left_to_select if edge.select]
-                # TODO: Try and figure out if it's possible to reselect an edge, I haven't found it happen once
-                # It might be possible to reselect an edge, I'm not sure
-                all_edges_are_new = len(tentative_edge_loop) == me.total_edge_sel
-                initial_loop_timing['edge loop got'] = perf_counter()
-                if all_edges_are_new:
-                    edge_loop = tentative_edge_loop
-                    edge_loop_i = tuple(edge.index for edge in edge_loop)
-                    for idx in edge_loop_i:
+                total_tentative_edges += len(tentative_edge_loop)
+                tentative_edge_loops.append(tentative_edge_loop)
+            # TODO: Try and figure out if it's even possible to reselect an edge, I haven't found it happen once
+            # Check to make sure we haven't reselected any edges
+            all_edges_are_new = total_tentative_edges == me.total_edge_sel
+            next_zipped_edge_dicts = []
+            if all_edges_are_new:
+                for edge_loop, (bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region) in zip(tentative_edge_loops, non_ngon_zip):
+                    edge_loop_i = []
+                    for edge in edge_loop:
+                        idx = edge.index
                         del bm_edges_left_to_select_dict[idx]
                         if idx in non_ngon_bm_edges_left_to_select_dict:
                             del non_ngon_bm_edges_left_to_select_dict[idx]
-                else:
-                    reselected_edges += me.total_edge_sel - len(tentative_edge_loop)
+                        edge_loop_i.append(idx)
+                        edge.select = False
+                    edge_loops.append(tuple(edge_loop_i))
+                    # Set up the next non_ngon_zip
+                    if non_ngon_bm_edges_left_to_select_dict:
+                        next_zipped_edge_dicts.append((bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region))
+            else:
+                for bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region in non_ngon_zip:
                     edge_loop = [edge for edge in all_bm_edges_in_region if edge.select]
                     edge_loop_i = tuple(edge.index for edge in edge_loop)
                     for idx in edge_loop_i:
@@ -698,29 +696,21 @@ class AutoDecimateButton(bpy.types.Operator):
                             del bm_edges_left_to_select_dict[idx]
                         if idx in non_ngon_bm_edges_left_to_select_dict:
                             del non_ngon_bm_edges_left_to_select_dict[idx]
-                initial_loop_timing['create tuple and update dicts'] = perf_counter()
-                edge_loops.append(edge_loop_i)
-                # print("Found edge loop: {}".format(edge_loop_i))
-                # And deselect the edges that were selected
-                for edge_in_loop in edge_loop:
-                    edge_in_loop.select = False
-                initial_loop_timing['done'] = perf_counter()
-                last_name = None
-                last_seconds = None
-                for name, seconds in initial_loop_timing.items():
-                    if last_name is not None:
-                        duration = seconds - last_seconds
-                        combined_key = last_name + ' to ' + name
-                        existing_duration = initial_loop_timings.setdefault(combined_key, 0)
-                        initial_loop_timings[combined_key] = existing_duration + duration
-                    last_name = name
-                    last_seconds = seconds
-            for name, seconds in initial_loop_timings.items():
-                print('{} took {} in total'.format(name, seconds))
-            # Now the only edges left are those in ngons. When selecting edge loops from these, we make extra checks that
-            # each selected edge hasn't been selected before.
-            # Ensure access by index is available
-            region_timings['ngon loop start'] = perf_counter()
+                    edge_loops.append(edge_loop_i)
+                    # print("Found edge loop: {}".format(edge_loop_i))
+                    # And deselect the edges that were selected
+                    for edge_in_loop in edge_loop:
+                        edge_in_loop.select = False
+                    # Set up the next non_ngon_zip
+                    if non_ngon_bm_edges_left_to_select_dict:
+                        next_zipped_edge_dicts.append((bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region))
+            non_ngon_zip = next_zipped_edge_dicts
+        timings['find ngon starting loops start'] = perf_counter()
+        # Now do the remaining ngon edges
+        # We need to do these one region at a time as we expect to frequently reselect edges
+        # If we were to do each region simultaneously, but we would always have to loop through all the edges of each
+        # region to get each edge loops, rather than just the remaining edges in each region
+        for bm_edges_left_to_select_dict in linked_edges_dicts:
             while bm_edges_left_to_select_dict:
                 edges_iter = iter(bm_edges_left_to_select_dict.values())
                 start_edge = next(edges_iter)
@@ -748,35 +738,24 @@ class AutoDecimateButton(bpy.types.Operator):
                     # Add each edge as a loop on its own
                     for edge in tentative_edge_loop:
                         idx = edge.index
-                        edge_loop_i = (idx, )
+                        edge_loop_i = (idx,)
                         edge_loops.append(edge_loop_i)
                         # print("Found edge loop from single ngon edge: {}".format(edge_loop_i))
                         if idx in bm_edges_left_to_select_dict:
                             del bm_edges_left_to_select_dict[idx]
-            region_timings['finished'] = perf_counter()
-            last_name = None
-            last_seconds = None
-            region_len = len(all_bm_edges_in_region)
-            print('Region of length {}:'.format(region_len))
-            for name, seconds in region_timings.items():
-                if last_name is not None and last_seconds is not None:
-                    print('\t{} took {} seconds from {}'.format(name, seconds - last_seconds, last_name))
-                last_name = name
-                last_seconds = seconds
-            print('Took {} from start to finish'.format(region_timings['finished'] - region_timings['start']))
-            if reselected_edges != 0:
-                print('Warning, {} edges were reselected. Lots of reselected edges can slow down finding edge loops.'.format(reselected_edges))
-        timings['edit mode finished'] = perf_counter()
+        timings['reveal mesh'] = perf_counter()
+        # TODO: Maybe faster to unhide the edges through foreach_set
+        # Unhide the mesh from when parts were hidden in order to break up the mesh into separate regions
+        bpy.ops.mesh.reveal(select=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        timings['finished'] = perf_counter()
         last_name = None
         last_seconds = None
         for name, seconds in timings.items():
-            if last_name is not None and last_seconds is not None:
-                print('{} took {} seconds from {}'.format(name, seconds - last_seconds, last_name))
+            if last_name is not None:
+                print('{} seconds from {} to {}'.format(seconds - last_seconds, last_name, name))
             last_name = name
             last_seconds = seconds
-        # TODO: Maybe faster to unhide the edges through foreach_set
-        bpy.ops.mesh.reveal(select=False)
-        bpy.ops.object.mode_set(mode="OBJECT")
         return edge_loops
 
     def decimate(self, context):
