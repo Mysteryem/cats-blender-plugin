@@ -688,22 +688,27 @@ class AutoDecimateButton(bpy.types.Operator):
                     if non_ngon_bm_edges_left_to_select_dict:
                         next_zipped_edge_dicts.append((bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region))
             else:
-                for bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region in non_ngon_zip:
-                    edge_loop = [edge for edge in all_bm_edges_in_region if edge.select]
-                    edge_loop_i = tuple(edge.index for edge in edge_loop)
-                    for idx in edge_loop_i:
-                        if idx in bm_edges_left_to_select_dict:
-                            del bm_edges_left_to_select_dict[idx]
-                        if idx in non_ngon_bm_edges_left_to_select_dict:
-                            del non_ngon_bm_edges_left_to_select_dict[idx]
-                    edge_loops.append(edge_loop_i)
-                    # print("Found edge loop: {}".format(edge_loop_i))
-                    # And deselect the edges that were selected
-                    for edge_in_loop in edge_loop:
-                        edge_in_loop.select = False
-                    # Set up the next non_ngon_zip
-                    if non_ngon_bm_edges_left_to_select_dict:
-                        next_zipped_edge_dicts.append((bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region))
+                # Clean up state and abort
+                bpy.ops.mesh.reveal(select=False)
+                bpy.ops.mesh.select_all(action='DESELECT')
+                bpy.ops.object.mode_set(mode="OBJECT")
+                raise RuntimeError("Reselected an edge in the main edge loop selection loop! Something is weird about {}, please let Mysteryem know in the Cats Discord server.".format(mesh_obj))
+                # for bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region in non_ngon_zip:
+                #     edge_loop = [edge for edge in all_bm_edges_in_region if edge.select]
+                #     edge_loop_i = tuple(edge.index for edge in edge_loop)
+                #     for idx in edge_loop_i:
+                #         if idx in bm_edges_left_to_select_dict:
+                #             del bm_edges_left_to_select_dict[idx]
+                #         if idx in non_ngon_bm_edges_left_to_select_dict:
+                #             del non_ngon_bm_edges_left_to_select_dict[idx]
+                #     edge_loops.append(edge_loop_i)
+                #     # print("Found edge loop: {}".format(edge_loop_i))
+                #     # And deselect the edges that were selected
+                #     for edge_in_loop in edge_loop:
+                #         edge_in_loop.select = False
+                #     # Set up the next non_ngon_zip
+                #     if non_ngon_bm_edges_left_to_select_dict:
+                #         next_zipped_edge_dicts.append((bm_edges_left_to_select_dict, non_ngon_bm_edges_left_to_select_dict, all_bm_edges_in_region))
             non_ngon_zip = next_zipped_edge_dicts
         timings['find ngon starting loops start'] = perf_counter()
         # Now do the remaining ngon edges
