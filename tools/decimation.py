@@ -407,7 +407,7 @@ class AutoDecimateButton(bpy.types.Operator):
         bpy.ops.object.mode_set(mode='OBJECT')
 
     @staticmethod
-    def _get_loop_decimate_weights(context, mesh_obj):
+    def _get_loop_decimate_weights(context, mesh_obj, iterations: int = 100):
         mod = mesh_obj.modifiers.new("Decimate", 'DECIMATE')
         mod.use_symmetry = True
         mod.symmetry_axis = 'X'
@@ -460,8 +460,6 @@ class AutoDecimateButton(bpy.types.Operator):
         # Set the uvs of the uv map
         vert_uv_layer.data.foreach_set('uv', vert_uvs)
 
-        # decimate N times, n/N% each time, and observe the result to get a list of leftover verts (the ones decimated)
-        iterations = 100
         # If a vertex is never decimated, it will have a weight of zero
         # If a vertex is immediately decimated, it will have a weight of close to one
         weights_np = np.zeros(len(mesh_obj.data.vertices))
@@ -470,6 +468,8 @@ class AutoDecimateButton(bpy.types.Operator):
         depsgraph = context.evaluated_depsgraph_get()
         mesh_decimated = mesh_obj.evaluated_get(depsgraph)
         last_remaining_vertex_indices = loop_vertex_indices
+        # decimate N times where N is 'iterations', n/N% each time, and observe the result to get a list of leftover
+        # verts (the ones decimated)
         # Start at almost no decimation (ratio of almost 1) and gradually decrease the ratio so that more
         # decimation occurs with each iteration
         for i in range(iterations - 1, 0, -1):
@@ -480,10 +480,11 @@ class AutoDecimateButton(bpy.types.Operator):
             decimated_uv_layer = mesh_decimated.data.uv_layers['CATS Vert']
             decimated_uvs = np.empty(len(decimated_uv_layer.data) * 2, dtype=uv_type)
             decimated_uv_layer.data.foreach_get('uv', decimated_uvs)
+            # As there is one uv per loop and there are usually multiple loops per vertex, we expect that this will
+            # contain duplicates. Perhaps we could count how many times each vertex appears in a loop in the original
+            # mesh and compare that to how many times each remaining vertex index appears in a loop in the decimated
+            # mesh
             remaining_vertex_indices = decimated_uvs.view(vertex_index_type)[view_slice]
-
-            # TODO: Might be faster to set(remaining_vertex_indices.tolist()) and use Python Set methods with
-            #  iteration like the original implementation
 
             # Since we only care about when we first find that a vertex has been decimated, we can compare
             # against the remaining vertex indices from the last iteration instead of the full list each time.
