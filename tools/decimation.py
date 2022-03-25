@@ -408,9 +408,18 @@ class AutoDecimateButton(bpy.types.Operator):
 
     @staticmethod
     def _get_loop_decimate_weights(context, mesh_obj, iterations: int = 100):
-        mod = mesh_obj.modifiers.new("Decimate", 'DECIMATE')
-        mod.use_symmetry = True
-        mod.symmetry_axis = 'X'
+        # Temporarily disable all other modifiers otherwise we can unpredictable results.
+        modifiers = mesh_obj.modifiers
+        viewport_shown_modifiers = []
+        for mod in modifiers:
+            if mod.show_viewport:
+                viewport_shown_modifiers.append(mod)
+                mod.show_viewport = False
+
+        # Add a decimate modifier that we'll use to determine how important each vertex is.
+        decimate_mod = modifiers.new("Decimate", 'DECIMATE')
+        decimate_mod.use_symmetry = True
+        decimate_mod.symmetry_axis = 'X'
 
         # Dark magic... encode the vert index into (usually) the x components of a UV map
 
@@ -464,7 +473,6 @@ class AutoDecimateButton(bpy.types.Operator):
         # If a vertex is immediately decimated, it will have a weight of close to one
         weights_np = np.zeros(len(mesh_obj.data.vertices))
 
-        # FIXME: We need to disable other modifiers that alter geometry because those will affect the evaluated_get!
         depsgraph = context.evaluated_depsgraph_get()
         mesh_decimated = mesh_obj.evaluated_get(depsgraph)
         last_remaining_vertex_indices = loop_vertex_indices
@@ -474,7 +482,7 @@ class AutoDecimateButton(bpy.types.Operator):
         # decimation occurs with each iteration
         for i in range(iterations - 1, 0, -1):
             ith_ratio = (i / iterations)
-            mod.ratio = ith_ratio
+            decimate_mod.ratio = ith_ratio
             # Update for the new ratio
             depsgraph.update()
             decimated_uv_layer = mesh_decimated.data.uv_layers['CATS Vert']
@@ -506,9 +514,13 @@ class AutoDecimateButton(bpy.types.Operator):
         weights = {idx: weight for idx, weight in enumerate(weights_np)}
 
         # Remove the modifier
-        mesh_obj.modifiers.remove(mod)
+        modifiers.remove(decimate_mod)
         # Remove the uv map
-        mesh_obj.data.uv_layers.remove(vert_uv_layer)
+        Common.remove_uv_layer(mesh_obj.data, vert_uv_layer)
+
+        # Restore the viewport display of the other modifiers
+        for mod in viewport_shown_modifiers:
+            mod.show_viewport = True
 
         return weights
 

@@ -289,6 +289,15 @@ def add_uv_layer(mesh, name='UVMap', copy_from_active=True, raise_on_failure=Tru
         return to_return
 
 
+def remove_uv_layer(mesh, uv_layer):
+    """Remove a uv layer from a mesh."""
+    if version_2_79_or_older():
+        uv_texture = mesh.uv_textures[uv_layer.name]
+        mesh.uv_textures.remove(uv_texture)
+    else:
+        mesh.uv_layers.remove(uv_layer)
+
+
 def set_default_stage_old():
     switch('OBJECT')
     unhide_all()
