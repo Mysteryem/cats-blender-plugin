@@ -762,8 +762,6 @@ class AutoDecimateButton(bpy.types.Operator):
         #  edit mode
         # Unhide the mesh from when parts were hidden in order to break up the mesh into separate regions
         bpy.ops.mesh.reveal(select=False)
-        # TODO: Do we want to stay in edit mode for further operations? Maybe add a function parameter to control this?
-        bpy.ops.object.mode_set(mode="OBJECT")
         timings['finished'] = perf_counter()
         last_name = None
         last_seconds = None
@@ -772,7 +770,57 @@ class AutoDecimateButton(bpy.types.Operator):
                 print('{} seconds from {} to {}'.format(seconds - last_seconds, last_name, name))
             last_name = name
             last_seconds = seconds
-        return edge_loops
+        return edge_loops, bm
+
+    @staticmethod
+    def _get_loop_decimate_weighted_edge_loops(weights, edge_loops, bm):
+        # from the new decimation vertex group, create a dict() of loops to sum of shape-importance (loops which contain texture edges put at the end)
+        # TODO: order needs to be usual -> texture boundaries -> mesh boundaries
+        # _get_loop_decimate_edge_loops has already unhidden everything
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.select_all(action='SELECT')
+        bpy.ops.uv.seams_from_islands()
+        bpy.ops.mesh.select_all(action="DESELECT")
+        bm_edges = bm.edges
+        bm_edges.ensure_lookup_table()
+
+        edge_loops_weighted = []
+        seam_edge_loops_weighted = []
+        boundary_edge_loops_weighted = []
+        for edge_loop in edge_loops:
+            loop_has_seams = False
+            loop_is_boundary = False
+            edge_weights = []
+            # TODO: If the edge loops were all ndarrays, we could probably do these faster
+            # TODO: If weights was an ndarray, we could probably do this faster again.
+            #  It might good to return the number of loops each edge is in from _get_loop_decimate_edge_loops so we
+            #  don't need to recalculate it for checking if edges are boundary edges when using numpy.
+            #  To get the seams with numpy, we would have to switch to object mode though as while the other data hasn't
+            #  changed since we entered edit mode, the seams have been newly added in edit mode.
+            for edge in edge_loop:
+                bm_edge = bm_edges[edge]
+                loop_has_seams |= bm_edge.seam
+                loop_is_boundary |= bm_edge.is_boundary
+                edge_weight = sum(weights[vert.index] for vert in bm_edge.verts)
+                edge_weights.append(edge_weight)
+            loop_weight = max(edge_weights)
+            weighted_loop = (loop_weight, edge_loop)
+            if loop_is_boundary:
+                boundary_edge_loops_weighted.append(weighted_loop)
+            elif loop_has_seams:
+                seam_edge_loops_weighted.append(weighted_loop)
+            else:
+                edge_loops_weighted.append(weighted_loop)
+
+        def get_weight(weight_loop_pair):
+            return weight_loop_pair[0]
+
+        edge_loops_weighted.sort(key=get_weight)
+        seam_edge_loops_weighted.sort(key=get_weight)
+        boundary_edge_loops_weighted.sort(key=get_weight)
+        edge_loops_weighted.extend(seam_edge_loops_weighted)
+        edge_loops_weighted.extend(boundary_edge_loops_weighted)
+        return edge_loops_weighted
 
     def decimate(self, context):
         print('START DECIMATION')
@@ -974,30 +1022,23 @@ class AutoDecimateButton(bpy.types.Operator):
                     for idx, _ in newweights.items():
                         weights[idx] = max(weights[idx], newweights[idx])
 
-                edge_loops = self._get_loop_decimate_edge_loops(mesh_obj)
+                # Get current seams before entering edit mode
+                edges = mesh_obj.data.edges
+                orig_edge_seams = np.empty(len(edges), dtype=bool)
+                edges.foreach_get('use_seam', orig_edge_seams)
 
-                # from the new decimation vertex group, create a dict() of loops to sum of shape-importance (loops which contain texture edges put at the end)
-                # TODO: order needs to be usual -> texture boundaries -> mesh boundaries
-                bpy.ops.object.mode_set(mode="EDIT")
-                bpy.ops.uv.seams_from_islands()
+                # NOTE: Enters edit mode and does not exit it
+                # Find all edge loops and get the editmode bmesh
+                edge_loops, bm = self._get_loop_decimate_edge_loops(mesh_obj)
+
+                # Get the edge loops sorted by their classification and then by their weights
+                # Classification is normal, seam and boundary in that order
+                edge_loops_weighted = self._get_loop_decimate_weighted_edge_loops(weights, edge_loops, bm)
+
                 bpy.ops.object.mode_set(mode="OBJECT")
-                edge_loops_weighted = [l for l in sorted([
-                                         (max(weights[mesh_obj.data.edges[edge].vertices[0]] +
-                                              weights[mesh_obj.data.edges[edge].vertices[1]]
-                                              for edge in edge_loop),
-                                         edge_loop)
-                                         for edge_loop in edge_loops
-                                         if not any(mesh_obj.data.edges[edge].use_seam for edge in edge_loop)
-                                      ], key=lambda v: v[0])]
-                edge_loops_weighted+= [l for l in sorted([
-                                         (max(weights[mesh_obj.data.edges[edge].vertices[0]] +
-                                              weights[mesh_obj.data.edges[edge].vertices[1]]
-                                              for edge in edge_loop),
-                                         edge_loop)
-                                         for edge_loop in edge_loops
-                                         if any(mesh_obj.data.edges[edge].use_seam for edge in edge_loop)
-                                      ], key=lambda v: v[0])]
-                # TODO: Meshes bordering the edge should be lowest decimatability
+                edges = mesh_obj.data.edges
+                edges.foreach_set('use_seam', orig_edge_seams)
+
                 print(edge_loops_weighted)
 
                 # dissolve from the bottom up until target decimation is met
