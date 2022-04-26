@@ -414,7 +414,7 @@ class PoseToRest(bpy.types.Operator):
                         mesh_obj.shape_key_add(name=original_basis_name)
                     else:
                         # Apply the pose to the mesh, taking into account the shape keys
-                        PoseToRest.apply_armature_to_mesh_with_shape_keys(armature_obj, mesh_obj)
+                        PoseToRest.apply_armature_to_mesh_with_shape_keys(armature_obj, mesh_obj, context.scene)
                 else:
                     # The mesh doesn't have shape keys, so we can easily apply the pose to the mesh
                     PoseToRest.apply_armature_to_mesh_with_no_shape_keys(armature_obj, mesh_obj)
@@ -445,7 +445,7 @@ class PoseToRest(bpy.types.Operator):
         bpy.ops.object.modifier_apply({'object': mesh_obj}, modifier=armature_mod.name)
 
     @staticmethod
-    def apply_armature_to_mesh_with_shape_keys(armature_obj, mesh_obj):
+    def apply_armature_to_mesh_with_shape_keys(armature_obj, mesh_obj, scene):
         # The active shape key will be changed, so save the current active index, so it can be restored afterwards
         old_active_shape_key_index = mesh_obj.active_shape_key_index
 
@@ -456,13 +456,16 @@ class PoseToRest(bpy.types.Operator):
         old_show_only_shape_key = mesh_obj.show_only_shape_key
         mesh_obj.show_only_shape_key = True
 
-        # Temporarily remove vertex_groups from shape keys because they still affect pinned shape keys
+        # Temporarily remove vertex_groups from and disable mutes on shape keys because they affect pinned shape keys
         me = mesh_obj.data
         shape_key_vertex_groups = []
+        shape_key_mutes = []
         key_blocks = me.shape_keys.key_blocks
         for shape_key in key_blocks:
             shape_key_vertex_groups.append(shape_key.vertex_group)
             shape_key.vertex_group = ''
+            shape_key_mutes.append(shape_key.mute)
+            shape_key.mute = False
 
         # Temporarily disable all modifiers from showing in the viewport so that they have no effect
         mods_to_reenable_viewport = []
@@ -481,39 +484,57 @@ class PoseToRest(bpy.types.Operator):
         # We can re-use the same array over and over
         eval_verts_cos_array = np.empty(co_length, dtype=np.single)
 
-        # depsgraph lets us evaluate objects and get their state after the effect of modifiers and shape keys
-        depsgraph = None
-        evaluated_mesh_obj = None
+        if Common.version_2_79_or_older():
+            def get_eval_cos_array():
+                # Create a new mesh with modifiers and shape keys applied
+                evaluated_mesh = mesh_obj.to_mesh(scene, True, 'PREVIEW')
+
+                # Get the cos of the vertices from the evaluated mesh
+                evaluated_mesh.vertices.foreach_get('co', eval_verts_cos_array)
+                # Delete the newly created mesh
+                bpy.data.meshes.remove(evaluated_mesh)
+                return eval_verts_cos_array
+        else:
+            # depsgraph lets us evaluate objects and get their state after the effect of modifiers and shape keys
+            depsgraph = None
+            evaluated_mesh_obj = None
+
+            def get_eval_cos_array():
+                nonlocal depsgraph
+                nonlocal evaluated_mesh_obj
+                # Get the depsgraph and evaluate the mesh if we haven't done so already
+                if depsgraph is None or evaluated_mesh_obj is None:
+                    depsgraph = bpy.context.evaluated_depsgraph_get()
+                    evaluated_mesh_obj = mesh_obj.evaluated_get(depsgraph)
+                else:
+                    # If we already have the depsgraph and evaluated mesh, in order for the change to the active shape
+                    # key to take effect, the depsgraph has to be updated
+                    depsgraph.update()
+                # Get the cos of the vertices from the evaluated mesh
+                evaluated_mesh_obj.data.vertices.foreach_get('co', eval_verts_cos_array)
+                return eval_verts_cos_array
+
         for i, shape_key in enumerate(key_blocks):
             # As shape key pinning is enabled, when we change the active shape key, it will change the state of the mesh
             mesh_obj.active_shape_key_index = i
-
-            # Get the depsgraph and evaluate the mesh if we haven't done so already
-            if depsgraph is None or evaluated_mesh_obj is None:
-                depsgraph = bpy.context.evaluated_depsgraph_get()
-                evaluated_mesh_obj = mesh_obj.evaluated_get(depsgraph)
-            else:
-                # If we already have the depsgraph and evaluated mesh, in order for the change to the active shape key
-                # to take effect, the depsgraph has to be updated
-                depsgraph.update()
-
-            # The co of the vertices of the evaluated mesh include the effect of the pinned shape key and all the
+            # The cos of the vertices of the evaluated mesh include the effect of the pinned shape key and all the
             # modifiers (in this case, only the armature modifier we added since all the other modifiers are disabled in
             # the viewport).
             # This combination gives the same effect as if we'd applied the armature modifier to a mesh with the same
             # shape as the active shape key, so we can simply set the shape key to the evaluated mesh position.
             #
-            # Get the cos of the vertices from the evaluated mesh
-            evaluated_mesh_obj.data.vertices.foreach_get('co', eval_verts_cos_array)
+            # Get the evaluated cos
+            evaluated_cos = get_eval_cos_array()
             # And set the shape key to those same cos
-            shape_key.data.foreach_set('co', eval_verts_cos_array)
+            shape_key.data.foreach_set('co', evaluated_cos)
 
         # Restore temporarily changed attributes and remove the added armature modifier
         for mod in mods_to_reenable_viewport:
             mod.show_viewport = True
         mesh_obj.modifiers.remove(armature_mod)
-        for shape_key, vertex_group in zip(me.shape_keys.key_blocks, shape_key_vertex_groups):
+        for shape_key, vertex_group, mute in zip(me.shape_keys.key_blocks, shape_key_vertex_groups, shape_key_mutes):
             shape_key.vertex_group = vertex_group
+            shape_key.mute = mute
         mesh_obj.active_shape_key_index = old_active_shape_key_index
         mesh_obj.show_only_shape_key = old_show_only_shape_key
 
