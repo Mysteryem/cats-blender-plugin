@@ -439,10 +439,23 @@ class PoseToRest(bpy.types.Operator):
     def apply_armature_to_mesh_with_no_shape_keys(armature_obj, mesh_obj):
         armature_mod = mesh_obj.modifiers.new('PoseToRest', 'ARMATURE')
         armature_mod.object = armature_obj
+        # In the unlikely case that there was already a modifier with the same name as the new modifier, the new
+        # modifier will have ended up with a different name
+        mod_name = armature_mod.name
+        # Context override to let us run the modifier operators on mesh_obj, even if it's not the active object
+        context_override = {'object': mesh_obj}
         # Moving the modifier to the first index will prevent an Info message about the applied modifier not being
         # first and potentially having unexpected results.
-        bpy.ops.object.modifier_move_to_index({'object': mesh_obj}, modifier=armature_mod.name, index=0)
-        bpy.ops.object.modifier_apply({'object': mesh_obj}, modifier=armature_mod.name)
+        if bpy.app.version >= (2, 90, 0):
+            # modifier_move_to_index was added in Blender 2.90
+            bpy.ops.object.modifier_move_to_index(context_override, modifier=mod_name, index=0)
+        else:
+            # The newly created modifier will be at the bottom of the list
+            armature_mod_index = len(mesh_obj.modifiers) - 1
+            # Move the modifier up until it's at the top of the list
+            for _ in range(armature_mod_index):
+                bpy.ops.object.modifier_move_up(context_override, modifier=mod_name)
+        bpy.ops.object.modifier_apply(context_override, modifier=mod_name)
 
     @staticmethod
     def apply_armature_to_mesh_with_shape_keys(armature_obj, mesh_obj, scene):
