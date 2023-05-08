@@ -58,7 +58,7 @@ class SavedData:
                 pose = obj.data.pose_position
             self.__object_properties[obj.name] = [mode, selected, hidden, pose]
 
-            active = get_active()
+            active = context.view_layer.objects.active
             if active:
                 self.__active_object = active.name
 
@@ -99,7 +99,7 @@ class SavedData:
 
         # Set the active object
         if load_active and self.__active_object and objects.get(self.__active_object):
-            if self.__active_object not in ignore and self.__active_object != get_active():
+            if self.__active_object not in ignore and self.__active_object != context.view_layer.objects.active:
                 set_active(objects.get(self.__active_object), skip_sel=True)
 
 
@@ -180,10 +180,6 @@ def set_active(obj, skip_sel=False):
     bpy.context.view_layer.objects.active = obj
 
 
-def get_active():
-    return bpy.context.view_layer.objects.active
-
-
 def select(obj, sel=True):
     if sel:
         hide(obj, False)
@@ -209,7 +205,9 @@ def set_unselectable(obj, val=True):
 
 
 def switch(new_mode, check_mode=True):
-    if check_mode and get_active() and get_active().mode == new_mode:
+    context = bpy.context
+    active = context.view_layer.objects.active
+    if check_mode and active and active.mode == new_mode:
         return
     if bpy.ops.object.mode_set.poll():
         bpy.ops.object.mode_set(mode=new_mode, toggle=False)
@@ -706,14 +704,14 @@ def get_meshes_objects(armature_name=None, mode=0, check=True, visible_only=Fals
 
     # Check for broken meshes and delete them
     if check:
-        current_active = get_active()
+        current_active = context.view_layer.objects.active
         to_remove = []
         for mesh in meshes:
             selected = is_selected(mesh)
             # print(mesh.name, mesh.users)
             set_active(mesh)
 
-            if not get_active():
+            if not context.view_layer.objects.active:
                 to_remove.append(mesh)
 
             if not selected:
@@ -734,6 +732,7 @@ def join_meshes(armature_name=None, mode=0, apply_transformations=True, repair_s
     # Modes:
     # 0 - Join all meshes
     # 1 - Join selected only
+    context = bpy.context
 
     if not armature_name:
         armature_name = bpy.context.scene.armature
@@ -779,7 +778,7 @@ def join_meshes(armature_name=None, mode=0, apply_transformations=True, repair_s
             mesh.data.uv_layers[0].name = 'UVMap'
 
     # Get the name of the active mesh in order to check if it was deleted later
-    active_mesh_name = get_active().name
+    active_mesh_name = context.view_layer.objects.active.name
 
     # Join the meshes
     if bpy.ops.object.join.poll():
@@ -796,7 +795,7 @@ def join_meshes(armature_name=None, mode=0, apply_transformations=True, repair_s
             print('DELETED', mesh.name, mesh.users)
 
     # Rename result to Body and correct modifiers
-    mesh = get_active()
+    mesh = context.view_layer.objects.active
     if mesh:
         # If its the only mesh in the armature left, rename it to Body
         if len(get_meshes_objects(armature_name=armature_name)) == 1:
@@ -984,9 +983,9 @@ def separate_by_shape_keys(context, mesh):
 
     for ob in context.selected_objects:
         if ob.type == 'MESH':
-            if ob != get_active():
+            active_tmp = context.view_layer.objects.active
+            if ob != active_tmp:
                 print('not active', ob.name)
-                active_tmp = get_active()
                 ob.name = ob.name.replace('.001', '') + '.no_shapes'
                 set_active(ob)
                 bpy.ops.object.shape_key_remove(all=True)
@@ -1033,9 +1032,9 @@ def separate_by_cats_protection(context, mesh):
 
     for ob in context.selected_objects:
         if ob.type == 'MESH':
-            if ob != get_active():
+            active_tmp = context.view_layer.objects.active
+            if ob != active_tmp:
                 print('not active', ob.name)
-                active_tmp = get_active()
                 ob.name = ob.name.replace('.001', '') + '.no_shapes'
                 set_active(ob)
                 bpy.ops.object.shape_key_remove(all=True)

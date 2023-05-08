@@ -135,8 +135,9 @@ class CombineMaterialsButton(bpy.types.Operator):
         return len(Common.get_meshes_objects(check=False)) > 0
 
     def assignmatslots(self, ob, matlist):
+        context = bpy.context
         scn = bpy.context.scene
-        ob_active = Common.get_active()
+        ob_active = context.view_layer.objects.active
         Common.set_active(ob)
 
         for s in ob.material_slots:
