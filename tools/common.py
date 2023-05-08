@@ -51,7 +51,7 @@ class SavedData:
 
         for obj in context.view_layer.objects:
             mode = obj.mode
-            selected = is_selected(obj)
+            selected = obj.select_get()
             hidden = is_hidden(obj)
             pose = None
             if obj.type == 'ARMATURE':
@@ -184,10 +184,6 @@ def select(obj, sel=True):
     if sel:
         hide(obj, False)
     obj.select_set(sel)
-
-
-def is_selected(obj):
-    return obj.select_get()
 
 
 def hide(obj, val=True):
@@ -694,7 +690,7 @@ def get_meshes_objects(armature_name=None, mode=0, check=True, visible_only=Fals
                 meshes.append(ob)
 
             elif mode == 3:
-                if is_selected(ob):
+                if ob.select_get():
                     meshes.append(ob)
 
     if visible_only:
@@ -707,7 +703,7 @@ def get_meshes_objects(armature_name=None, mode=0, check=True, visible_only=Fals
         current_active = context.view_layer.objects.active
         to_remove = []
         for mesh in meshes:
-            selected = is_selected(mesh)
+            selected = mesh.select_get()
             # print(mesh.name, mesh.users)
             set_active(mesh)
 
