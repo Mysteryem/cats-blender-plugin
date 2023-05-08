@@ -31,8 +31,9 @@ class MergeArmature(bpy.types.Operator):
         # Get both armatures
         base_armature_name = bpy.context.scene.merge_armature_into
         merge_armature_name = bpy.context.scene.merge_armature
-        base_armature = Common.get_objects()[base_armature_name]
-        merge_armature = Common.get_objects()[merge_armature_name]
+        objects = context.view_layer.objects
+        base_armature = objects[base_armature_name]
+        merge_armature = objects[merge_armature_name]
 
         if not merge_armature:
             saved_data.load()
@@ -107,8 +108,9 @@ class AttachMesh(bpy.types.Operator):
         mesh_name = bpy.context.scene.attach_mesh
         base_armature_name = bpy.context.scene.merge_armature_into
         attach_bone_name = bpy.context.scene.attach_to_bone
-        mesh = Common.get_objects()[mesh_name]
-        armature = Common.get_objects()[base_armature_name]
+        objects = context.view_layer.objects
+        mesh = objects[mesh_name]
+        armature = objects[base_armature_name]
 
         # Reparent mesh to target armature
         mesh.parent = armature
@@ -182,9 +184,11 @@ class CustomModelTutorialButton(bpy.types.Operator):
 
 
 def merge_armatures(base_armature_name, merge_armature_name, mesh_only, mesh_name=None, merge_same_bones=False):
+    context = bpy.context
     tolerance = 0.00008726647  # around 0.005 degrees
-    base_armature = Common.get_objects()[base_armature_name]
-    merge_armature = Common.get_objects()[merge_armature_name]
+    objects = context.view_layer.objects
+    base_armature = objects[base_armature_name]
+    merge_armature = objects[merge_armature_name]
 
     # Fixes bones disappearing, prevents bones from having their tail and head at the exact same position
     x_cord, y_cord, z_cord, fbx = Common.get_bone_orientations(base_armature)

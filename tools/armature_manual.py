@@ -1764,8 +1764,9 @@ class TestButton(bpy.types.Operator):
         # mesh_source = Common.get_objects()['ClothesCombined']
         # mesh_target = Common.get_objects()['ClothesW']
 
-        mesh_source = Common.get_objects()['Legs']
-        mesh_target = Common.get_objects()['_LegsW']
+        objects = context.view_layer.objects
+        mesh_source = objects['Legs']
+        mesh_target = objects['_LegsW']
 
         def group_source(vg):
             return mesh_source.vertex_groups[vg.group]

@@ -39,20 +39,17 @@ def version_2_93_or_older():
     return bpy.app.version < (2, 90)
 
 
-def get_objects():
-    return bpy.context.view_layer.objects
-
-
 class SavedData:
     __object_properties = {}
     __active_object = None
 
     def __init__(self):
+        context = bpy.context
         # initialize as instance attributes rather than class attributes
         self.__object_properties = {}
         self.__active_object = None
 
-        for obj in get_objects():
+        for obj in context.view_layer.objects:
             mode = obj.mode
             selected = is_selected(obj)
             hidden = is_hidden(obj)
@@ -66,6 +63,7 @@ class SavedData:
                 self.__active_object = active.name
 
     def load(self, ignore=None, load_mode=True, load_select=True, load_hide=True, load_active=True, hide_only=False):
+        context = bpy.context
         if not ignore:
             ignore = []
         if hide_only:
@@ -73,12 +71,14 @@ class SavedData:
             load_select = False
             load_active = False
 
+        objects = context.view_layer.objects
+
         for obj_name, values in self.__object_properties.items():
             # print(obj_name, ignore)
             if obj_name in ignore:
                 continue
 
-            obj = get_objects().get(obj_name)
+            obj = objects.get(obj_name)
             if not obj:
                 continue
 
@@ -98,15 +98,16 @@ class SavedData:
                 hide(obj, hidden)
 
         # Set the active object
-        if load_active and self.__active_object and get_objects().get(self.__active_object):
+        if load_active and self.__active_object and objects.get(self.__active_object):
             if self.__active_object not in ignore and self.__active_object != get_active():
-                set_active(get_objects().get(self.__active_object), skip_sel=True)
+                set_active(objects.get(self.__active_object), skip_sel=True)
 
 
 def get_armature(armature_name=None):
+    context = bpy.context
     if not armature_name:
-        armature_name = bpy.context.scene.armature
-    for obj in get_objects():
+        armature_name = context.scene.armature
+    for obj in context.view_layer.objects:
         if obj.type == 'ARMATURE':
             if obj.name == armature_name or Common.is_enum_empty(armature_name):
                 return obj
@@ -114,8 +115,9 @@ def get_armature(armature_name=None):
 
 
 def get_armature_objects():
+    context = bpy.context
     armatures = []
-    for obj in get_objects():
+    for obj in context.view_layer.objects:
         if obj.type == 'ARMATURE':
             armatures.append(obj)
     return armatures
@@ -141,7 +143,8 @@ def unhide_all_unnecessary():
 
 
 def unhide_all():
-    for obj in get_objects():
+    context = bpy.context
+    for obj in context.view_layer.objects:
         hide(obj, False)
         set_unselectable(obj, False)
 
@@ -166,7 +169,8 @@ def unhide_all_of(obj_to_unhide=None):
 
 
 def unselect_all():
-    for obj in get_objects():
+    context = bpy.context
+    for obj in context.view_layer.objects:
         select(obj, False)
 
 
@@ -227,6 +231,7 @@ def set_default_stage():
 
     :return: the armature
     """
+    context = bpy.context
 
     # Remove rigidbody collections, as they cause issues if they are not in the view_layer
     if bpy.context.scene.remove_rigidbodies_joints:
@@ -242,7 +247,7 @@ def set_default_stage():
     unhide_all()
     unselect_all()
 
-    for obj in get_objects():
+    for obj in context.view_layer.objects:
         set_active(obj)
         switch('OBJECT')
         if obj.type == 'ARMATURE':
@@ -366,7 +371,8 @@ def find_center_vector_of_vertex_group(mesh, vertex_group):
 
 
 def vertex_group_exists(mesh_name, bone_name):
-    mesh = get_objects()[mesh_name]
+    context = bpy.context
+    mesh = context.view_layer.objects[mesh_name]
     data = mesh.data
     verts = data.vertices
 
@@ -572,10 +578,11 @@ def get_shapekeys(context, names, is_mouth, no_basis, decimation, return_list):
     if decimation:
         meshes = meshes_list
     elif meshes_list:
+        objects = context.view_layer.objects
         if is_mouth:
-            meshes = [get_objects().get(context.scene.mesh_name_viseme)]
+            meshes = [objects.get(context.scene.mesh_name_viseme)]
         else:
-            meshes = [get_objects().get(context.scene.mesh_name_eye)]
+            meshes = [objects.get(context.scene.mesh_name_eye)]
     else:
         return choices
 
@@ -664,6 +671,7 @@ def get_meshes_objects(armature_name=None, mode=0, check=True, visible_only=Fals
     # 1 = Top level only
     # 2 = All meshes
     # 3 = Selected only
+    context = bpy.context
 
     if not armature_name:
         armature = get_armature()
@@ -671,7 +679,7 @@ def get_meshes_objects(armature_name=None, mode=0, check=True, visible_only=Fals
             armature_name = armature.name
 
     meshes = []
-    for ob in get_objects():
+    for ob in context.view_layer.objects:
         if ob.type == 'MESH':
             if mode == 0 or mode == 5:
                 if ob.parent:
@@ -846,6 +854,7 @@ def apply_transforms(armature_name=None):
 
 
 def apply_all_transforms():
+    context = bpy.context
 
     def apply_transforms_with_children(parent):
         unselect_all()
@@ -855,7 +864,7 @@ def apply_all_transforms():
         for child in parent.children:
             apply_transforms_with_children(child)
 
-    for obj in get_objects():
+    for obj in context.view_layer.objects:
         if not obj.parent:
             apply_transforms_with_children(obj)
 
@@ -1045,12 +1054,13 @@ def separate_by_cats_protection(context, mesh):
 
 
 def prepare_separation(mesh):
+    context = bpy.context
     set_default_stage()
     unselect_all()
 
     # Remove Rigidbodies and joints
     if bpy.context.scene.remove_rigidbodies_joints:
-        for obj in get_objects():
+        for obj in context.view_layer.objects:
             if 'rigidbodies' in obj.name or 'joints' in obj.name:
                 delete_hierarchy(obj)
 
@@ -1102,7 +1112,8 @@ def separate_by_verts():
 
 
 def save_shapekey_order(mesh_name):
-    mesh = get_objects()[mesh_name]
+    context = bpy.context
+    mesh = context.view_layer.objects[mesh_name]
     armature = get_armature()
 
     if not armature:
@@ -1194,7 +1205,8 @@ def update_shapekey_orders():
 
 
 def sort_shape_keys(mesh_name, shape_key_order=None):
-    mesh = get_objects()[mesh_name]
+    context = bpy.context
+    mesh = context.view_layer.objects[mesh_name]
     if not has_shapekeys(mesh):
         return
     set_active(mesh)
@@ -1283,7 +1295,8 @@ def sort_shape_keys(mesh_name, shape_key_order=None):
 
 
 def isEmptyGroup(group_name):
-    mesh = get_objects().get('Body')
+    context = bpy.context
+    mesh = context.view_layer.objects.get('Body')
     if mesh is None:
         return True
     vgroup = mesh.vertex_groups.get(group_name)
@@ -1413,8 +1426,9 @@ def delete_zero_weight(armature_name=None, ignore=''):
 
 
 def remove_unused_objects():
+    context = bpy.context
     default_scene_objects = []
-    for obj in get_objects():
+    for obj in context.view_layer.objects:
         if (obj.type == 'CAMERA' and obj.name == 'Camera') \
                 or (obj.type == 'LAMP' and obj.name == 'Lamp') \
                 or (obj.type == 'LIGHT' and obj.name == 'Light') \
@@ -1427,8 +1441,9 @@ def remove_unused_objects():
 
 
 def remove_no_user_objects():
+    context = bpy.context
     # print('\nREMOVE OBJECTS')
-    for block in get_objects():
+    for block in context.view_layer.objects:
         # print(block.name, block.users)
         if block.users == 0:
             print('Removing obj ', block.name)
@@ -1767,9 +1782,10 @@ def update_material_list(self=None, context=None):
 
 
 def unify_materials():
+    context = bpy.context
     textures = []  # TODO
 
-    for ob in get_objects():
+    for ob in context.view_layer.objects:
         if ob.type == "MESH":
             for mat_slot in ob.material_slots:
                 if mat_slot.material:

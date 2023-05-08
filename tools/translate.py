@@ -110,7 +110,8 @@ class TranslateObjectsButton(bpy.types.Operator):
 
     def execute(self, context):
         to_translate = []
-        for obj in Common.get_objects():
+        objects = context.view_layer.objects
+        for obj in objects:
             if obj.name not in to_translate:
                 to_translate.append(obj.name)
             if obj.type == 'ARMATURE':
@@ -122,7 +123,7 @@ class TranslateObjectsButton(bpy.types.Operator):
         update_dictionary(to_translate, self=self)
 
         i = 0
-        for obj in Common.get_objects():
+        for obj in objects:
             obj.name, translated = translate(obj.name)
             if translated:
                 i += 1

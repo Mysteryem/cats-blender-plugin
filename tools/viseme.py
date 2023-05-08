@@ -22,7 +22,8 @@ class AutoVisemeButton(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        mesh = Common.get_objects()[context.scene.mesh_name_viseme]
+        objects = context.view_layer.objects
+        mesh = objects[context.scene.mesh_name_viseme]
 
         if not Common.has_shapekeys(mesh):
             self.report({'ERROR'}, t('AutoVisemeButton.error.noShapekeys'))
@@ -40,7 +41,7 @@ class AutoVisemeButton(bpy.types.Operator):
 
         wm = bpy.context.window_manager
 
-        mesh = Common.get_objects()[context.scene.mesh_name_viseme]
+        mesh = objects[context.scene.mesh_name_viseme]
         Common.set_active(mesh)
 
         # Fix a small bug
@@ -49,7 +50,7 @@ class AutoVisemeButton(bpy.types.Operator):
         # Rename selected shapes and rename them back at the end
         shapes = [context.scene.mouth_a, context.scene.mouth_o, context.scene.mouth_ch]
         renamed_shapes = [context.scene.mouth_a, context.scene.mouth_o, context.scene.mouth_ch]
-        mesh = Common.get_objects()[context.scene.mesh_name_viseme]
+        mesh = objects[context.scene.mesh_name_viseme]
         for index, shapekey in enumerate(mesh.data.shape_keys.key_blocks):
             if shapekey.name == context.scene.mouth_a:
                 print(shapekey.name + " " + context.scene.mouth_a)
@@ -236,7 +237,7 @@ class AutoVisemeButton(bpy.types.Operator):
         return {'FINISHED'}
 
     def mix_shapekey(self, context, shapes, shapekey_data, rename_to, intensity):
-        mesh = Common.get_objects()[context.scene.mesh_name_viseme]
+        mesh = context.view_layer.objects[context.scene.mesh_name_viseme]
 
         # Remove existing shapekey
         for index, shapekey in enumerate(mesh.data.shape_keys.key_blocks):
