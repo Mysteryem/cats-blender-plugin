@@ -314,9 +314,6 @@ def register():
     # Disable request warning when using google translate
     requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
-    # Monkey patch fbx exporter to include empty shapekeys
-    tools.fbx_patch.start_patch_fbx_exporter_timer()
-
     # Apply the settings after a short time, because you can't change checkboxes during register process
     tools.settings.start_apply_settings_timer()
 

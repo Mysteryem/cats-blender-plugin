@@ -17,7 +17,6 @@ from .. import globs
 from . import armature_manual
 from . import common as Common
 from . import settings as Settings
-from . import fbx_patch as Fbx_patch
 from .register import register_wrap
 from .translations import t
 
@@ -2044,9 +2043,6 @@ class ExportModel(bpy.types.Operator):
                 return {'FINISHED'}
 
         # Continue if there are no errors or the check was skipped
-
-        # Monkey patch FBX exporter again to import empty shape keys
-        Fbx_patch.patch_fbx_exporter()
 
         # Check if copy protection is enabled
         mesh_smooth_type = 'OFF'
