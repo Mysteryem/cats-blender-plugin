@@ -270,7 +270,7 @@ Join our Discord to report errors, suggestions and make comments!
 **Discord: https://discord.gg/f8yZGnv**
 
 ## Requirements
- - Blender **2.79** or **2.80** or above (run as administrator is recommended)
+ - Blender **2.80** or above (run as administrator is recommended)
    - mmd_tools is **not required**! Cats comes pre-installed with it!
      - If you have custom Python installed which Blender might use, you need to have Numpy installed
 

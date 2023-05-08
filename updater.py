@@ -50,8 +50,6 @@ for mod in addon_utils.modules():
 
 # Icons for UI
 ICON_URL = 'URL'
-if bpy.app.version < (2, 79, 9):
-    ICON_URL = 'LOAD_FACTORY'
 
 
 class CheckForUpdateButton(bpy.types.Operator):
@@ -755,8 +753,6 @@ def get_user_preferences():
 
 
 def layout_split(layout, factor=0.0, align=False):
-    if bpy.app.version < (2, 79, 9):
-        return layout.split(percentage=factor, align=align)
     return layout.split(factor=factor, align=align)
 
 

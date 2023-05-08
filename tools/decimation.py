@@ -95,7 +95,7 @@ class RemoveShapeButton(bpy.types.Operator):
     bl_description = t('RemoveShapeButton.desc')
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    shape_name = bpy.props.StringProperty()
+    shape_name: bpy.props.StringProperty()
 
     def execute(self, context):
         ignore_shapes.remove(self.shape_name)
@@ -110,7 +110,7 @@ class RemoveMeshButton(bpy.types.Operator):
     bl_description = t('RemoveMeshButton.desc')
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    mesh_name = bpy.props.StringProperty()
+    mesh_name: bpy.props.StringProperty()
 
     def execute(self, context):
         ignore_meshes.remove(self.mesh_name)
@@ -125,15 +125,15 @@ class AutoDecimateButton(bpy.types.Operator):
     bl_description = t('AutoDecimateButton.desc')
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    armature_name = bpy.props.StringProperty(
+    armature_name: bpy.props.StringProperty(
         name='armature_name',
     )
 
-    preserve_seams = bpy.props.BoolProperty(
+    preserve_seams: bpy.props.BoolProperty(
         name='preserve_seams',
     )
 
-    seperate_materials = bpy.props.BoolProperty(
+    seperate_materials: bpy.props.BoolProperty(
         name='seperate_materials'
     )
 

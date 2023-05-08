@@ -187,8 +187,8 @@ def remove_corrupted_files():
 
 
 def check_unsupported_blender_versions():
-    # Don't allow Blender versions older than 2.79
-    if bpy.app.version < (2, 79):
+    # Don't allow Blender versions older than 2.80
+    if bpy.app.version < (2, 80):
         unregister()
         sys.tracebacklimit = 0
         raise ImportError(t('Main.error.unsupportedVersion'))
@@ -309,10 +309,7 @@ def register():
     bpy.context.window_manager.addon_support = {'OFFICIAL', 'COMMUNITY'}
 
     # Add shapekey button to shapekey menu
-    if hasattr(bpy.types, 'MESH_MT_shape_key_specials'):  # pre 2.80
-        bpy.types.MESH_MT_shape_key_specials.append(tools.shapekey.addToShapekeyMenu)
-    else:
-        bpy.types.MESH_MT_shape_key_context_menu.append(tools.shapekey.addToShapekeyMenu)
+    bpy.types.MESH_MT_shape_key_context_menu.append(tools.shapekey.addToShapekeyMenu)
 
     # Disable request warning when using google translate
     requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
