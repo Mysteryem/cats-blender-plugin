@@ -315,8 +315,8 @@ def fix_eye_position(context, old_eye, new_eye, head, right_side):
             return
 
         if head:
-            p1 = Common.matmul(mesh.matrix_world, head.head)
-            p2 = Common.matmul(mesh.matrix_world, coords_eye)
+            p1 = mesh.matrix_world @ head.head
+            p2 = mesh.matrix_world @ coords_eye
             length = (p1 - p2).length
             print(length)  # TODO calculate scale if bone is too close to center of the eye
 
@@ -398,11 +398,11 @@ def repair_shapekeys(mesh_name, vertex_group):
                 if index < i:
                     continue
                 shapekey = vert
-                shapekey_coords = Common.matmul(mesh.matrix_world, shapekey[value])
+                shapekey_coords = mesh.matrix_world @ shapekey[value]
                 shapekey_coords[0] -= 0.00007 * randBoolNumber()
                 shapekey_coords[1] -= 0.00007 * randBoolNumber()
                 shapekey_coords[2] -= 0.00007 * randBoolNumber()
-                shapekey[value] = Common.matmul(mesh.matrix_world.inverted(), shapekey_coords)
+                shapekey[value] = mesh.matrix_world.inverted() @ shapekey_coords
                 print('DEBUG: Repaired shape: ' + key)
                 i += 1
                 moved = True
@@ -444,11 +444,11 @@ def repair_shapekeys_mouth(mesh_name):  # TODO Add vertex repairing!
         value = bm.verts.layers.shape.get(key)
         for vert in bm.verts:
             shapekey = vert
-            shapekey_coords = Common.matmul(mesh.matrix_world, shapekey[value])
+            shapekey_coords = mesh.matrix_world @ shapekey[value]
             shapekey_coords[0] -= 0.00007
             shapekey_coords[1] -= 0.00007
             shapekey_coords[2] -= 0.00007
-            shapekey[value] = Common.matmul(mesh.matrix_world.inverted(), shapekey_coords)
+            shapekey[value] = mesh.matrix_world.inverted() @ shapekey_coords
             print('TEST')
             moved = True
             break

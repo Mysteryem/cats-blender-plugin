@@ -1543,10 +1543,6 @@ def has_shapekeys(mesh):
     return hasattr(mesh.data.shape_keys, 'key_blocks')
 
 
-def matmul(a, b):
-    return a @ b
-
-
 def ui_refresh():
     # A way to refresh the ui
     refreshed = False
