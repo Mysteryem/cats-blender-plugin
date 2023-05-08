@@ -35,10 +35,6 @@ from mmd_tools_local.panels import view_prop as mmd_view_prop
 #  - Translate progress bar
 
 
-def version_2_93_or_older():
-    return bpy.app.version < (2, 90)
-
-
 class SavedData:
     __object_properties = {}
     __active_object = None
@@ -158,16 +154,6 @@ def unhide_children(parent):
         unhide_children(child)
 
 
-def unhide_all_of(obj_to_unhide=None):
-    if not obj_to_unhide:
-        return
-
-    top_parent = get_top_parent(obj_to_unhide)
-    hide(top_parent, False)
-    set_unselectable(top_parent, False)
-    unhide_children(top_parent)
-
-
 def unselect_all():
     context = bpy.context
     for obj in context.view_layer.objects:
@@ -207,15 +193,6 @@ def switch(new_mode, check_mode=True):
         return
     if bpy.ops.object.mode_set.poll():
         bpy.ops.object.mode_set(mode=new_mode, toggle=False)
-
-
-def set_default_stage_old():
-    switch('OBJECT')
-    unhide_all()
-    unselect_all()
-    armature = get_armature()
-    set_active(armature)
-    return armature
 
 
 def set_default_stage():
@@ -285,15 +262,6 @@ def remove_empty():
         unselect_all()
 
 
-def get_bone_angle(p1, p2):
-    try:
-        ret = degrees((p1.head - p1.tail).angle(p2.head - p2.tail))
-    except ValueError:
-        ret = 0
-
-    return ret
-
-
 def remove_unused_vertex_groups(ignore_main_bones=False):
     remove_count = 0
     unselect_all()
@@ -313,25 +281,6 @@ def remove_unused_vertex_groups(ignore_main_bones=False):
                     continue
                 mesh.vertex_groups.remove(mesh.vertex_groups[i])
                 remove_count += 1
-    return remove_count
-
-
-def remove_unused_vertex_groups_of_mesh(mesh):
-    remove_count = 0
-    unselect_all()
-    mesh.update_from_editmode()
-
-    vgroup_used = {i: False for i, k in enumerate(mesh.vertex_groups)}
-
-    for v in mesh.data.vertices:
-        for g in v.groups:
-            if g.weight > 0.0:
-                vgroup_used[g.group] = True
-
-    for i, used in sorted(vgroup_used.items(), reverse=True):
-        if not used:
-            mesh.vertex_groups.remove(mesh.vertex_groups[i])
-            remove_count += 1
     return remove_count
 
 
@@ -402,16 +351,6 @@ def get_top_meshes(self, context):
         choices.append((mesh.name, mesh.name, mesh.name))
 
     return choices
-
-
-# currently unused
-def get_all_meshes(self, context):
-    choices = []
-
-    for mesh in get_meshes_objects(mode=2, check=False):
-        choices.append((mesh.name, mesh.name, mesh.name))
-
-    return _sort_enum_choices_by_identifier_lower(choices)
 
 
 def get_armature_list(self, context):
@@ -650,15 +589,6 @@ def fix_armature_names(armature_name=None):
         pass
 
 
-def get_texture_sizes(self, context):
-    # Format is (identifier, name, description)
-    return [
-        ("1024", "1024 (low)", "1024"),
-        ("2048", "2048 (medium)", "2048"),
-        ("4096", "4096 (high)", "4096")
-    ]
-
-
 def get_meshes_objects(armature_name=None, mode=0, check=True, visible_only=False):
     # Modes:
     # 0 = With armatures only
@@ -862,25 +792,6 @@ def apply_all_transforms():
     for obj in context.view_layer.objects:
         if not obj.parent:
             apply_transforms_with_children(obj)
-
-
-def reset_transforms(armature_name=None):
-    if not armature_name:
-        armature_name = bpy.context.scene.armature
-    armature = get_armature(armature_name=armature_name)
-
-    # Reset transforms on armature
-    for i in range(0, 3):
-        armature.location[i] = 0
-        armature.rotation_euler[i] = 0
-        armature.scale[i] = 1
-
-    # Apply transforms of meshes
-    for mesh in get_meshes_objects(armature_name=armature_name):
-        for i in range(0, 3):
-            mesh.location[i] = 0
-            mesh.rotation_euler[i] = 0
-            mesh.scale[i] = 1
 
 
 def separate_by_materials(context, mesh):
@@ -1092,20 +1003,6 @@ def can_remove_shapekey(key_block):
     return True
 
 
-def separate_by_verts():
-    for obj in bpy.context.selected_objects:
-        if obj.type == 'MESH' and len(obj.vertex_groups) > 0:
-            Common.set_active(obj)
-        bpy.ops.object.mode_set(mode='EDIT')
-        bpy.ops.mesh.select_mode(type='VERT')
-        for vgroup in obj.vertex_groups:
-            bpy.ops.mesh.select_all(action='DESELECT')
-            bpy.ops.object.vertex_group_set_active(group=vgroup.name)
-            bpy.ops.object.vertex_group_select()
-            bpy.ops.mesh.separate(type='SELECTED')
-        bpy.ops.object.mode_set(mode='OBJECT')
-
-
 def save_shapekey_order(mesh_name):
     context = bpy.context
     mesh = context.view_layer.objects[mesh_name]
@@ -1289,45 +1186,6 @@ def sort_shape_keys(mesh_name, shape_key_order=None):
     wm.progress_end()
 
 
-def isEmptyGroup(group_name):
-    context = bpy.context
-    mesh = context.view_layer.objects.get('Body')
-    if mesh is None:
-        return True
-    vgroup = mesh.vertex_groups.get(group_name)
-    if vgroup is None:
-        return True
-
-    for vert in mesh.data.vertices:
-        for group in vert.groups:
-            if group.group == vgroup.index:
-                if group.weight > 0:
-                    return False
-
-    return True
-
-
-def removeEmptyGroups(obj, thres=0):
-    z = []
-    for v in obj.data.vertices:
-        for g in v.groups:
-            if g.weight > thres:
-                if g not in z:
-                    z.append(obj.vertex_groups[g.group])
-    for r in obj.vertex_groups:
-        if r not in z:
-            obj.vertex_groups.remove(r)
-
-
-def removeZeroVerts(obj, thres=0):
-    for v in obj.data.vertices:
-        z = []
-        for g in v.groups:
-            if not g.weight > thres:
-                z.append(g)
-        for r in z:
-            obj.vertex_groups[g.group].remove([v.index])
-
 def delete_hierarchy(parent):
     unselect_all()
     to_delete = []
@@ -1353,12 +1211,6 @@ def delete(obj):
 
     objs = bpy.data.objects
     objs.remove(objs[obj.name], do_unlink=True)
-
-
-def days_between(d1, d2, time_format):
-    d1 = datetime.strptime(d1, time_format)
-    d2 = datetime.strptime(d2, time_format)
-    return abs((d2 - d1).days)
 
 
 def delete_bone_constraints(armature_name=None):
@@ -1433,34 +1285,6 @@ def remove_unused_objects():
     if len(default_scene_objects) == 3:
         for obj in default_scene_objects:
             delete_hierarchy(obj)
-
-
-def remove_no_user_objects():
-    context = bpy.context
-    # print('\nREMOVE OBJECTS')
-    for block in context.view_layer.objects:
-        # print(block.name, block.users)
-        if block.users == 0:
-            print('Removing obj ', block.name)
-            delete(block)
-    # print('\nREMOVE MESHES')
-    for block in bpy.data.meshes:
-        # print(block.name, block.users)
-        if block.users == 0:
-            print('Removing mesh ', block.name)
-            bpy.data.meshes.remove(block)
-    # print('\nREMOVE MATERIALS')
-    for block in bpy.data.materials:
-        # print(block.name, block.users)
-        if block.users == 0:
-            print('Removing material ', block.name)
-            bpy.data.materials.remove(block)
-
-    # print('\nREMOVE MATS')
-    # for block in bpy.data.materials:
-    #     print(block.name, block.users)
-    #     if block.users == 0:
-    #         bpy.data.materials.remove(block)
 
 
 def is_end_bone(name, armature_name):
@@ -1776,80 +1600,6 @@ def update_material_list(self=None, context=None):
         print('Material Combiner not found')
 
 
-def unify_materials():
-    context = bpy.context
-    textures = []  # TODO
-
-    for ob in context.view_layer.objects:
-        if ob.type == "MESH":
-            for mat_slot in ob.material_slots:
-                if mat_slot.material:
-                    mat_slot.material.blend_method = 'HASHED'
-                    # mat_slot.material.blend_method = 'BLEND'  # Use this for transparent textures only
-                    print('MAT: ', mat_slot.material.name)
-                    if mat_slot.material.node_tree:
-                        nodes = mat_slot.material.node_tree.nodes
-                        image = None
-                        for node in nodes:
-                            # print(' ' + node.name + ', ' + node.type + ', ' + node.label)
-                            if node.type == 'TEX_IMAGE' and 'toon' not in node.name and 'sphere' not in node.name:
-                                image = node.image
-                                # textures.append(node.image.name)
-                            mat_slot.material.node_tree.nodes.remove(node)
-
-                        # Create Image node
-                        node_texture = nodes.new(type='ShaderNodeTexImage')
-                        node_texture.location = 0, 0
-                        node_texture.image = image
-                        node_texture.label = 'Cats Texture'
-
-                        # Create Principled BSDF node
-                        node_prinipled = nodes.new(type='ShaderNodeBsdfPrincipled')
-                        node_prinipled.location = 300, -220
-                        node_prinipled.label = 'Cats Emission'
-                        node_prinipled.inputs['Specular'].default_value = 0
-                        node_prinipled.inputs['Roughness'].default_value = 0
-                        node_prinipled.inputs['Sheen Tint'].default_value = 0
-                        node_prinipled.inputs['Clearcoat Roughness'].default_value = 0
-                        node_prinipled.inputs['IOR'].default_value = 0
-
-                        # Create Transparency BSDF node
-                        node_transparent = nodes.new(type='ShaderNodeBsdfTransparent')
-                        node_transparent.location = 325, -100
-                        node_transparent.label = 'Cats Transparency'
-
-                        # Create Mix Shader node
-                        node_mix = nodes.new(type='ShaderNodeMixShader')
-                        node_mix.location = 600, 0
-                        node_mix.label = 'Cats Mix'
-
-                        # Create Output node
-                        node_output = nodes.new(type='ShaderNodeOutputMaterial')
-                        node_output.location = 800, 0
-                        node_output.label = 'Cats Output'
-
-                        # Create 2nd Output node
-                        node_output2 = nodes.new(type='ShaderNodeOutputMaterial')
-                        node_output2.location = 800, -200
-                        node_output2.label = 'Cats Export'
-
-                        # Link nodes together
-                        mat_slot.material.node_tree.links.new(node_texture.outputs['Color'], node_prinipled.inputs['Base Color'])
-                        mat_slot.material.node_tree.links.new(node_texture.outputs['Alpha'], node_mix.inputs['Fac'])
-
-                        mat_slot.material.node_tree.links.new(node_prinipled.outputs['BSDF'], node_mix.inputs[2])
-                        mat_slot.material.node_tree.links.new(node_transparent.outputs['BSDF'], node_mix.inputs[1])
-
-                        mat_slot.material.node_tree.links.new(node_mix.outputs['Shader'], node_output.inputs['Surface'])
-
-                        mat_slot.material.node_tree.links.new(node_prinipled.outputs['BSDF'], node_output2.inputs['Surface'])
-
-                    # break
-
-    print(textures, len(textures))
-    return {'FINISHED'}
-
-
 def add_principled_shader(mesh):
     # This adds a principled shader and material output node in order for
     # Unity to automatically detect exported materials
@@ -1963,25 +1713,6 @@ def add_principled_shader(mesh):
             mat_slot.material.node_tree.links.new(node_image.outputs['Color'], node_principled.inputs['Base Color'])
             mat_slot.material.node_tree.links.new(node_image.outputs['Alpha'], node_principled.inputs['Alpha'])
             mat_slot.material.node_tree.links.new(node_principled.outputs['BSDF'], node_output.inputs['Surface'])
-
-
-def remove_toon_shader(mesh):
-    for mat_slot in mesh.material_slots:
-        if mat_slot.material and mat_slot.material.node_tree:
-            nodes = mat_slot.material.node_tree.nodes
-            for node in nodes:
-                if node.name == 'mmd_toon_tex':
-                    print('Toon tex removed from material', mat_slot.material.name)
-                    nodes.remove(node)
-                    # if not node.image or not node.image.filepath:
-                    #     print('Toon tex removed: Empty, from material', mat_slot.material.name)
-                    #     nodes.remove(node)
-                    #     continue
-                    #
-                    # image_filepath = bpy.path.abspath(node.image.filepath)
-                    # if not os.path.isfile(image_filepath):
-                    #     print('Toon tex removed:', node.image.name, 'from material', mat_slot.material.name)
-                    #     nodes.remove(node)
 
 
 def fix_mmd_shader(mesh):
@@ -2439,78 +2170,3 @@ def wrap_dynamic_enum_items(items_func, property_name, sort=True, in_place=True)
         return _fix_out_of_bounds_enum_choices(self, context.scene, items, property_name, property_path)
 
     return wrapped_items_func
-
-
-""" === THIS CODE COULD BE USEFUL === """
-
-# def addvertex(meshname, shapekey_name):
-#     mesh = get_objects()[meshname].data
-#     bm = bmesh.new()
-#     bm.from_mesh(mesh)
-#     bm.verts.ensure_lookup_table()
-#
-#     print(" ")
-#     if shapekey_name in bm.verts.layers.shape.keys():
-#         val = bm.verts.layers.shape.get(shapekey_name)
-#         print("%s = %s" % (shapekey_name, val))
-#         sk = mesh.shape_keys.key_blocks[shapekey_name]
-#         print("v=%f, f=%f" % (sk.value, sk.frame))
-#         for i in range(len(bm.verts)):
-#             v = bm.verts[i]
-#             delta = v[val] - v.co
-#             if (delta.length > 0):
-#                 print("v[%d]+%s" % (i, delta))
-#
-#     print(" ")
-
-# === THIS CODE COULD BE USEFUL ===
-
-# Check which shape keys will be deleted on export by Blender
-# def checkshapekeys():
-#     for ob in get_objects():
-#         if ob.type == 'MESH':
-#             mesh = ob
-#     bm = bmesh.new()
-#     bm.from_mesh(mesh.data)
-#     bm.verts.ensure_lookup_table()
-#
-#     deleted_shapes = []
-#     for key in bm.verts.layers.shape.keys():
-#         if key == 'Basis':
-#             continue
-#         val = bm.verts.layers.shape.get(key)
-#         delete = True
-#         for vert in bm.verts:
-#             delta = vert[val] - vert.co
-#             if delta.length > 0:
-#                 delete = False
-#                 break
-#         if delete:
-#             deleted_shapes.append(key)
-#
-#     return deleted_shapes
-
-# # Repair vrc shape keys old
-# def repair_shapekeys():
-#     for ob in get_objects():
-#         if ob.type == 'MESH':
-#             mesh = ob
-#             bm = bmesh.new()
-#             bm.from_mesh(mesh.data)
-#             bm.verts.ensure_lookup_table()
-#
-#             for key in bm.verts.layers.shape.keys():
-#                 if not key.startswith('vrc'):
-#                     continue
-#
-#                 value = bm.verts.layers.shape.get(key)
-#                 for vert in bm.verts:
-#                     shapekey = vert
-#                     shapekey_coords = mesh.matrix_world * shapekey[value]
-#                     shapekey_coords[2] -= 0.00001
-#                     shapekey[value] = mesh.matrix_world.inverted() * shapekey_coords
-#                     break
-#
-#             bm.to_mesh(mesh.data)
-
-# === THIS CODE COULD BE USEFUL ===
