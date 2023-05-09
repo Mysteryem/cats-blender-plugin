@@ -66,9 +66,6 @@ ArmaturePanel.label,Model,モデル,모델
 ArmaturePanel.warn.newBlender1,Potentially unsupported Blender version detected!
 ArmaturePanel.warn.newBlender2,Some features might not work!
 ArmaturePanel.warn.newBlender3,CATS currently supports up to Blender 3.5.
-ArmaturePanel.warn.oldBlender1,Old Blender version detected!,古いブレンダーバージョンが検出されました!,이전 블렌더 버전이 발견되었습니다!
-ArmaturePanel.warn.oldBlender2,Some features might not work!,一部の機能は動作しない可能性があります!,일부 기능이 작동하지 않을 수 있습니다!
-ArmaturePanel.warn.oldBlender3,Please update to Blender 2.80!,ブレンダー2.80以上にアップデートしてください!,블렌더 2.80 버전으로 업데이트하세요!
 ArmaturePanel.warn.noDict1,Dictionary not found!,辞書が見つかりません!,사전파일(Dictionary)을 찾을 수 없습니다!
 ArmaturePanel.warn.noDict2,"Translations will work, but are not optimized.",翻訳は機能しますが、最適化されません。,번역은 되지만 최적화되지는 않습니다.
 ArmaturePanel.warn.noDict3,Reinstall Cats to fix this.,これを修正するためにCatsを再インストールします。,이 문제를 해결하려면 Cats를 다시 설치하세요.
@@ -106,7 +103,6 @@ ManualPanel.FixFBTButton.label,Add,追加,추가
 ManualPanel.RemoveFBTButton.label,Remove,削除,제거
 CustomPanel.label,Custom Model Creation,カスタム モデルの作成,커스텀 모델 제작
 CustomPanel.mergeArmatures,Merge Armatures:,マージアーマチュア:,뼈대(Armature) 통합:
-CustomPanel.warn.twoArmatures,Two armatures are required!,2つのアーマチュアが必要です!,두개의 뼈대(Armature)가 필요합니다!
 CustomPanel.mergeInto,Base,ベース,베이스로
 CustomPanel.toMerge,To Merge,マージするには,통합할 부분
 CustomPanel.attachToBone,Attach to,添付する,붙이기
@@ -120,7 +116,6 @@ DecimationPanel.decimationMode,Decimation Mode:,デシメーションモード:,
 DecimationPanel.safeModeDesc, Decent results - No shape key loss, まともな結果 - シェイプキーの損失はありません, 괜찮은 결과 - 쉐이프키 손실 없음
 DecimationPanel.halfModeDesc, Good results - Minimal shape key loss, 良好な結果 - 最小のシェープキー損失," 나쁘지 않은 결과, - 최소한의 쉐이프키 손실됨"
 DecimationPanel.fullModeDesc, Consistent results - Full shape key loss, 一貫した結果 - フルシェイプキー損失, 일관된 결과 - 모든 쉐이프키들이 손실됨
-DecimationPanel.smartModeDesc, Best results - Preserve shape keys, 最良の結果 - 形状キーの保存, 최고의 결과 - 쉐이프키들이 보존됨
 DecimationPanel.customSeparateMaterials,Start by Separating by Materials:,材料別に分離して開始:,매테리얼별로 분리하는 것으로 시작:
 DecimationPanel.SeparateByMaterials.label,Separate by Materials,材料別に分離,매테리얼별로 분리
 DecimationPanel.customJoinMeshes,Stop by Joining Meshes:,メッシュに参加して停止:,메쉬를 통합하여 중지:
@@ -547,16 +542,6 @@ TestLowerlid.desc,This lets you see how lowerlids will look in-game.,,게임 중
 ResetBlinkTest.label,Reset Shapes,図形をリセットする,쉐이프 초기화
 ResetBlinkTest.desc,This resets the blink testing.,,눈깜빡임 테스트를 초기화한다.
 ImportAnyModel.label,Import Any Model,任意のモデルをインポート,아무 모델 불러오기
-ImportAnyModel.desc2.79,"Import a model of any supported type.
-
-Supported types:
-- MMD: .pmx/.pmd
-- XNALara: .xps/.mesh/.ascii
-- Source: .smd/.qc
-- VRM: .vrm
-- FBX .fbx
-- DAE: .dae
-- ZIP: .zip",,
 ImportAnyModel.desc2.8,"Import a model of any supported type.
 
 Supported types:
@@ -608,7 +593,6 @@ SourceToolsButton.label,Download Source Tools,ソースツールをダウンロ�
 SourceToolsButton.URL,https://github.com/Artfunkel/BlenderSourceTools,,
 SourceToolsButton.success,Source Tools link opened,,
 VrmToolsButton.label,Download VRM Importer,VRMインポーターをダウンロード,VRM Importer 다운로드
-VrmToolsButton.URL_2.79,https://github.com/iCyP/VRM_IMPORTER_for_Blender2_79,,
 VrmToolsButton.URL_2.8,https://github.com/saturday06/VRM_IMPORTER_for_Blender2_8,,
 VrmToolsButton.success,VRM Importer link opened,,
 ExportModel.label,Export Model,モデルのエクスポート,모델 내보내기
@@ -723,7 +707,6 @@ TranslateTexturesButton.success,Translated {number} textures,,{number}개의 텍
 TranslateAllButton.label,Translate Everything,すべてを翻訳する,모두 번역
 TranslateAllButton.desc,Translates everything using the internal dictionary and Google Translate into English,Translates everything using the internal dictionary and Google Translate,모든 것들을 내장된 사전과 구글번역을 이용해 영어로 번역합니다.
 TranslateAllButton.success,Translated everything.,,번역이 완료되었습니다.
-TranslateX.error.wrongVersion,You need Blender 2.79 or higher for this function.,,이 기능을 사용하려면 Blender 2.79 이상의 버전이 필요합니다.
 update_dictionary.error.cantConnect,Could not connect to Google. Some parts could not be translated.,,구글에 연결하지 못했습니다. 일부분은 번역되지 못했습니다.
 update_dictionary.error.temporaryBan,It looks like you got banned from Google Translate temporarily!,,일시적으로 Google 번역에서 차단 된 것 같습니다!
 update_dictionary.error.catsTranslated,"
@@ -879,14 +862,6 @@ Scene.merge_armatures_cleanup_shape_keys.desc,"Cleans up the meshes shape keys.
 Uncheck this if shape keys you want to keep got deleted",,
 Scene.decimation_mode.label,Decimation Mode,単純化モード,
 Scene.decimation_mode.desc,Decimation Mode,,
-Scene.decimation_mode.smart.label,Smart,スマート,
-Scene.decimation_mode.smart.desc,"Best results - repair shape keys after decimation
-
-This will decimate your whole model and attempt to undo the warping caused by Blender's decimation.
-This will give the best results and keep blinking and lip syncing, but may have issues on some models.",,"최고의 결과 - 데시메이션 이후 쉐이프키들을 복구함
-
-This will decimate your whole model and attempt to undo the warping caused by Blender's decimation.
-This will give the best results and keep blinking and lip syncing, but may have issues on some models."
 Scene.decimation_mode.safe.label,Safe,安全,안전
 Scene.decimation_mode.safe.desc,"Decent results - no shape key loss
 
