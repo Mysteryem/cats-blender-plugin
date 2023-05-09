@@ -4,7 +4,6 @@ import bpy
 from . import common as Common
 from .register import register_wrap
 
-from collections import OrderedDict
 from .translations import t
 
 
@@ -76,96 +75,26 @@ class AutoVisemeButton(bpy.types.Operator):
         shape_ch = context.scene.mouth_ch
 
         # Set up the shape keys. Some values are made in order to keep Blender from deleting them. There should never be duplicate shape keys!
-        shapekey_data = OrderedDict()
-        shapekey_data['vrc.v_aa'] = {
-            'mix': [
-                [(shape_a), (0.9998)]
-            ]
-        }
-        shapekey_data['vrc.v_ch'] = {
-            'mix': [
-                [(shape_ch), (0.9996)]
-            ]
-        }
-        shapekey_data['vrc.v_dd'] = {
-            'mix': [
-                [(shape_a), (0.3)],
-                [(shape_ch), (0.7)]
-            ]
-        }
-        # Note 2022-07-16: 'ih' and 'e' were originally swapped, due to early VRChat viseme
-        # refs being slightly incorrect. See:
-        # https://github.com/absolute-quantum/cats-blender-plugin/issues/505
-        # https://developer.oculus.com/documentation/unreal/audio-ovrlipsync-viseme-reference/
-        shapekey_data['vrc.v_ih'] = {
-            'mix': [
-                [(shape_ch), (0.7)],
-                [(shape_o), (0.3)]
-            ]
-        }
-        shapekey_data['vrc.v_ff'] = {
-            'mix': [
-                [(shape_a), (0.2)],
-                [(shape_ch), (0.4)]
-            ]
-        }
-        shapekey_data['vrc.v_e'] = {
-            'mix': [
-                [(shape_a), (0.5)],
-                [(shape_ch), (0.2)]
-            ]
-        }
-        shapekey_data['vrc.v_kk'] = {
-            'mix': [
-                [(shape_a), (0.7)],
-                [(shape_ch), (0.4)]
-            ]
-        }
-        shapekey_data['vrc.v_nn'] = {
-            'mix': [
-                [(shape_a), (0.2)],
-                [(shape_ch), (0.7)]
-            ]
-        }
-        shapekey_data['vrc.v_oh'] = {
-            'mix': [
-                [(shape_a), (0.2)],
-                [(shape_o), (0.8)]
-            ]
-        }
-        shapekey_data['vrc.v_ou'] = {
-            'mix': [
-                [(shape_o), (0.9994)]
-            ]
-        }
-        shapekey_data['vrc.v_pp'] = {
-            'mix': [
-                [(shape_a), (0.0004)],
-                [(shape_o), (0.0004)]
-            ]
-        }
-        shapekey_data['vrc.v_rr'] = {
-            'mix': [
-                [(shape_ch), (0.5)],
-                [(shape_o), (0.3)]
-            ]
-        }
-        shapekey_data['vrc.v_sil'] = {
-            'mix': [
-                [(shape_a), (0.0002)],
-                [(shape_ch), (0.0002)]
-            ]
-        }
-        shapekey_data['vrc.v_ss'] = {
-            'mix': [
-                [(shape_ch), (0.8)],
-            ]
-        }
-        shapekey_data['vrc.v_th'] = {
-            'mix': [
-                [(shape_a), (0.4)],
-                [(shape_o), (0.15)]
-            ]
+        shapekey_data = {
+            'vrc.v_aa': {'mix': [[shape_a, 0.9998]]},
+            'vrc.v_ch': {'mix': [[shape_ch, 0.9996]]},
+            'vrc.v_dd': {'mix': [[shape_a, 0.3], [shape_ch, 0.7]]},
+            # Note 2022-07-16: 'ih' and 'e' were originally swapped, due to early VRChat viseme
+            # refs being slightly incorrect. See:
+            # https://github.com/absolute-quantum/cats-blender-plugin/issues/505
+            # https://developer.oculus.com/documentation/unreal/audio-ovrlipsync-viseme-reference/
+            'vrc.v_ih': {'mix': [[shape_ch, 0.7], [shape_o, 0.3]]},
+            'vrc.v_ff': {'mix': [[shape_a, 0.2], [shape_ch, 0.4]]},
+            'vrc.v_e': {'mix': [[shape_a, 0.5], [shape_ch, 0.2]]},
+            'vrc.v_kk': {'mix': [[shape_a, 0.7], [shape_ch, 0.4]]},
+            'vrc.v_nn': {'mix': [[shape_a, 0.2], [shape_ch, 0.7]]},
+            'vrc.v_oh': {'mix': [[shape_a, 0.2], [shape_o, 0.8]]},
+            'vrc.v_ou': {'mix': [[shape_o, 0.9994]]},
+            'vrc.v_pp': {'mix': [[shape_a, 0.0004], [shape_o, 0.0004]]},
+            'vrc.v_rr': {'mix': [[shape_ch, 0.5], [shape_o, 0.3]]},
+            'vrc.v_sil': {'mix': [[shape_a, 0.0002], [shape_ch, 0.0002]]},
+            'vrc.v_ss': {'mix': [[shape_ch, 0.8]]},
+            'vrc.v_th': {'mix': [[shape_a, 0.4], [shape_o, 0.15]]},
         }
 
         total_fors = len(shapekey_data)

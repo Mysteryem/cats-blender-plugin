@@ -6,10 +6,8 @@ import json
 import copy
 import time
 import pathlib
-import collections
 from threading import Thread
 from datetime import datetime, timezone
-from collections import OrderedDict
 
 from .. import globs
 from ..tools.register import register_wrap
@@ -27,11 +25,12 @@ settings_data_unchanged = None
 settings_threads = []
 
 # Settings name = [Default Value, Require Blender Restart]
-settings_default = OrderedDict()
-settings_default['show_mmd_tabs'] = [True, False]
-settings_default['embed_textures'] = [False, False]
-settings_default['ui_lang'] = ["auto", False]
-# settings_default['use_custom_mmd_tools'] = [False, True]
+settings_default = {
+    'show_mmd_tabs': [True, False],
+    'embed_textures': [False, False],
+    'ui_lang': ["auto", False],
+    # 'use_custom_mmd_tools': [False, True],
+}
 
 lock_settings = False
 
@@ -92,7 +91,7 @@ def load_settings():
     # Load settings file and reset it if errors are found
     try:
         with open(settings_file, encoding="utf8") as file:
-            settings_data = json.load(file, object_pairs_hook=collections.OrderedDict)
+            settings_data = json.load(file)
             # print('SETTINGS LOADED!')
     except FileNotFoundError:
         print("SETTINGS FILE NOT FOUND!")
@@ -163,8 +162,7 @@ def reset_settings(full_reset=False, to_reset_settings=None):
     global settings_data, settings_data_unchanged
 
     if full_reset:
-        settings_data = OrderedDict()
-        settings_data['last_supporter_update'] = None
+        settings_data = {'last_supporter_update': None}
 
         for setting, value in settings_default.items():
             settings_data[setting] = value[0]

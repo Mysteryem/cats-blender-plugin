@@ -1,7 +1,5 @@
 # GPL License
 
-from collections import OrderedDict
-
 bone_list = ['ControlNode', 'ParentNode', 'Center', 'CenterTip', 'Groove', 'Waist', 'EyesTip',
              'LowerBodyTip', 'UpperBody2Tip', 'GrooveTip', 'NeckTip']
 bone_list_with = ['_Shadow_', '_Dummy_', 'Dummy_', 'WaistCancel', 'LegIKParent', 'LegIK',
@@ -312,7 +310,7 @@ bone_finger_list = [
 #   L/R = \L
 #   l/r = \l
 ################################
-bone_rename = OrderedDict()
+bone_rename = {}
 bone_rename['Hips'] = [
     'LowerBody',
     'Lower_Body',
@@ -1010,7 +1008,7 @@ bone_rename['Breast_\L'] = [
 #   L/R = \L
 #   l/r = \l
 ################################
-bone_reweight = OrderedDict()
+bone_reweight = {}
 bone_reweight['Hips'] = [
     'LowerBody1',
     'Lowerbody2',
@@ -1710,7 +1708,7 @@ bone_list_weight = {
     'DEF_F_Pinky_03_R': 'LittleFinger3_R',
 }
 
-bone_rename_fingers = OrderedDict()
+bone_rename_fingers = {}
 bone_rename_fingers['Thumb0_\L'] = [
     # 'Arm_\Left_Finger_1a',
     'T_1_\L',

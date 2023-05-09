@@ -7,11 +7,9 @@ import copy
 import json
 import pathlib
 import traceback
-import collections
 import requests.exceptions
 
 from datetime import datetime, timezone
-from collections import OrderedDict
 
 from . import common as Common
 from .register import register_wrap
@@ -271,14 +269,14 @@ class TranslateAllButton(bpy.types.Operator):
 # Loads the dictionaries at the start of blender
 def load_translations():
     global dictionary
-    dictionary = OrderedDict()
-    temp_dict = OrderedDict()
+    dictionary = {}
+    temp_dict = {}
     dict_found = False
 
     # Load internal dictionary
     try:
         with open(dictionary_file, encoding="utf8") as file:
-            temp_dict = json.load(file, object_pairs_hook=collections.OrderedDict)
+            temp_dict = json.load(file)
             dict_found = True
             # print('DICTIONARY LOADED!')
     except FileNotFoundError:
@@ -292,7 +290,7 @@ def load_translations():
     try:
         with open(dictionary_google_file, encoding="utf8") as file:
             global dictionary_google
-            dictionary_google = json.load(file, object_pairs_hook=collections.OrderedDict)
+            dictionary_google = json.load(file)
 
             if 'created' not in dictionary_google \
                     or 'translations' not in dictionary_google \
@@ -463,7 +461,7 @@ def update_dictionary(to_translate_list, translating_shapes=False, self=None):
 
     # Sort dictionary
     temp_dict = copy.deepcopy(dictionary)
-    dictionary = OrderedDict()
+    dictionary = {}
     for key in sorted(temp_dict, key=lambda k: len(k), reverse=True):
         dictionary[key] = temp_dict[key]
 
@@ -532,13 +530,14 @@ def fix_jp_chars(name):
 
 def reset_google_dict():
     global dictionary_google
-    dictionary_google = OrderedDict()
 
     now_utc = datetime.now(timezone.utc).strftime(globs.time_format)
 
-    dictionary_google['created'] = now_utc
-    dictionary_google['translations'] = {}
-    dictionary_google['translations_full'] = {}
+    dictionary_google = {
+        'created': now_utc,
+        'translations': {},
+        'translations_full': {},
+    }
 
     save_google_dict()
     print('GOOGLE DICT RESET')
@@ -549,7 +548,7 @@ def save_google_dict():
         json.dump(dictionary_google, outfile, ensure_ascii=False, indent=4)
 
 # def cvs_to_json():
-#     temp_dict = OrderedDict()
+#     temp_dict = {}
 #
 #     # Load internal dictionary
 #     try:

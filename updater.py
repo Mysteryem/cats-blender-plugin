@@ -11,7 +11,6 @@ import pathlib
 import zipfile
 import addon_utils
 from threading import Thread
-from collections import OrderedDict
 from bpy.app.handlers import persistent
 from .tools.translations import t
 from .tools.common import wrap_dynamic_enum_items
@@ -403,7 +402,7 @@ def check_for_update():
 
 def get_github_releases(repo):
     global version_list
-    version_list = OrderedDict()
+    version_list = {}
 
     if fake_update:
         print('FAKE INSTALL!')

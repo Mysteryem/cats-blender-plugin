@@ -5,7 +5,6 @@ import copy
 import math
 import bmesh
 
-from collections import OrderedDict
 from random import random
 
 from . import common as Common
@@ -813,9 +812,7 @@ class TestLowerlid(bpy.types.Operator):
 
     def execute(self, context):
         mesh = context.view_layer.objects[context.scene.mesh_name_eye]
-        shapes = OrderedDict()
-        shapes['vrc.lowerlid_left'] = context.scene.eye_lowerlid_shape
-        shapes['vrc.lowerlid_right'] = context.scene.eye_lowerlid_shape
+        shapes = {'vrc.lowerlid_left', 'vrc.lowerlid_right'}
 
         for shape_key in mesh.data.shape_keys.key_blocks:
             if shape_key.name in shapes:
