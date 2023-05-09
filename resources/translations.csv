@@ -130,6 +130,12 @@ DecimationPanel.warn.noDecimation,Every mesh is selected. This equals no Decimat
 DecimationPanel.warn.noMeshSelected,No mesh selected,メッシュが選択されていません,선택된 메쉬가 없음
 DecimationPanel.warn.emptyList,"Both lists are empty, this equals Full Decimation!",両方のリストが空で、これは完全なデシメーションに等しい!,양쪽 리스트들이 비어있어 전체 메쉬의 버텍스를 줄이는 것과 같습니다!
 DecimationPanel.warn.correctWhitelist,Both whitelists are considered during decimation,両方のホワイトリストはデシメーション中に考慮されます,양쪽 화이트리스트들은 데시메이션 중에 고려됩니다.
+DecimationPanel.preset.excellent.label,Excellent,優れた,
+DecimationPanel.preset.excellent.description,The maximum number of tris you can have for an Excellent rating.,優れた評価を得るために持つことができるトリスの最大数,당신의 아바타가 Excellent 등급을 받을 수 있는 최대 삼각폴리곤(Tris) 개수입니다.
+DecimationPanel.preset.good.label,Good,良い,
+DecimationPanel.preset.good.description,The maximum number of tris you can have for a Good rating.,あなたが良い評価のために持つことができるトリスの最大数,당신의 아바타가 Good 등급을 받을 수 있는 최대 삼각폴리곤(Tris) 개수입니다.
+DecimationPanel.preset.quest.label,Quest,,
+DecimationPanel.preset.quest.description,"The recommended number of tris for Quest avatars.
 A hard limit will be established in the future that will not be much more than this.","Questアバターの推奨トリス数.
 将来的には、これをはるかに超えることのない厳しい制限が設定されます。","퀘스트용 아바타들을 위해 권장되는 삼각폴리곤(Tris)의 개수입니다.
 앞으로는 이보다 심하지는 않을 엄격한 제한이 설정될 것입니다."
@@ -1139,12 +1145,6 @@ bpy.types.Scene.cats_update_action.ignore.label,Ignore this version,このバー
 bpy.types.Scene.cats_update_action.ignore.desc,This ignores this version. You will be reminded again when the next version releases,,
 bpy.types.Scene.cats_update_action.defer.label,Remind me later,後で通知する,나중에 다시보기
 bpy.types.Scene.cats_update_action.defer.desc,Hides the update notification til the next Blender restart,,
-DecimationPanel.preset.excellent.label,Excellent,優れた,
-DecimationPanel.preset.excellent.description,The maximum number of tris you can have for an Excellent rating.,優れた評価を得るために持つことができるトリスの最大数,당신의 아바타가 Excellent 등급을 받을 수 있는 최대 삼각폴리곤(Tris) 개수입니다.
-DecimationPanel.preset.good.label,Good,良い,
-DecimationPanel.preset.good.description,The maximum number of tris you can have for a Good rating.,あなたが良い評価のために持つことができるトリスの最大数,당신의 아바타가 Good 등급을 받을 수 있는 최대 삼각폴리곤(Tris) 개수입니다.
-DecimationPanel.preset.quest.label,Quest,,
-DecimationPanel.preset.quest.description,"The recommended number of tris for Quest avatars.
 merge_visible_meshes_only,"Merge Visible Meshes Only"
 select_this_to_keep_the_bones_after_merging_them_to_their_parents_or_to_the_active_bone,"Select this to keep the bones after merging them to their parents or to the active bone"
 select_this_to_only_merge_the_weights_of_the_visible_meshes,"Select this to only merge the weights of the visible meshes"
