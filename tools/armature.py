@@ -245,12 +245,11 @@ class FixArmature(bpy.types.Operator):
 
         # Remove things that are not meshes
         if len(armature.children) > 1:
+            # TODO: Iterate through children recursively
             for child in armature.children:
                 for child2 in child.children:
                     if child2.type != 'MESH':
                         Common.delete(child2)
-                        continue
-                    Common.delete(child2)
 
                 if child.type != 'MESH':
                     Common.delete(child)
