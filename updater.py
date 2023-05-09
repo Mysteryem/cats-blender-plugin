@@ -90,8 +90,8 @@ class UpdateToLatestButton(bpy.types.Operator):
 
 class UpdateToSelectedButton(bpy.types.Operator):
     bl_idname = 'cats_updater.update_selected'
-    bl_label = 'Update to Selected version'
-    bl_description = 'Updates CATS to the selected version'
+    bl_label = t('UpdateToSelectedButton.label')
+    bl_description = t('UpdateToSelectedButton.desc')
     bl_options = {'INTERNAL'}
 
     @classmethod
