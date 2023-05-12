@@ -11,6 +11,8 @@ from mathutils import Vector
 from datetime import datetime
 from html.parser import HTMLParser
 from html.entities import name2codepoint
+from functools import partial
+from typing import Callable
 
 from . import common as Common
 from . import supporter as Supporter
@@ -1096,94 +1098,169 @@ def update_shapekey_orders():
         armature['CUSTOM'] = custom_data
 
 
-def sort_shape_keys(mesh_name, shape_key_order=None):
+def resync_reference_key(mesh: bpy.types.Mesh):
+    """When changing the reference shape key outside of Edit mode, the mesh needs to be updated to match because it does
+    not do so automatically.
+    Not doing this will cause incorrect exports and will cause shape keys created with from_mix=False to return the mesh
+    to the shape of the old reference shape key.
+
+    The mesh must not be in Edit mode and must have shape keys."""
+    # Copy vertex positions from the reference shape key to the mesh vertices
+    reference_key_cos = np.empty(len(mesh.vertices) * 3, dtype=np.single)
+    mesh.shape_keys.reference_key.data.foreach_get("co", reference_key_cos)
+    mesh.vertices.foreach_set("co", reference_key_cos)
+
+
+def _sort_shape_keys(
+        mesh_obj: bpy.types.Object,
+        wm: bpy.types.WindowManager,
+        order: list[str],
+        reference_key_name: str,
+        move_active_shape_key_to_top: Callable[[], None],
+):
+    """Internal function for sorting shape keys used by sort_shape_keys, separated into its own function to avoid
+    redefinition on each sort_shape_keys call."""
+    mesh: bpy.types.Mesh = mesh_obj.data
+
+    wm.progress_begin(0, len(order) + 1)
+
+    key_blocks = mesh.shape_keys.key_blocks
+    # First move reference_key_name to the very top, replacing the existing reference key.
+    idx = key_blocks.find(reference_key_name)
+    if idx > 0:
+        mesh_obj.active_shape_key_index = idx
+        move_active_shape_key_to_top()
+        if idx > 1:
+            # move_active_shape_key_to_top() should also change active_shape_key_index to the new index, but we'll
+            # set it just in-case.
+            mesh_obj.active_shape_key_index = 1
+            move_active_shape_key_to_top()
+        # We've changed the reference key, the mesh must be re-synced to the new reference key
+        resync_reference_key(mesh)
+
+    already_ordered = True
+    order_in_key_blocks_gen = (name for name in order if name in key_blocks)
+    for expected_name, shape_key in zip(order_in_key_blocks_gen, key_blocks[1:]):
+        if shape_key.name != expected_name:
+            already_ordered = False
+            break
+
+    if already_ordered:
+        wm.progress_end()
+        return
+
+    current_step = 1
+    wm.progress_update(current_step)
+
+    # Next move every shape key in `order` to the top in reverse, this way, the shape keys will end up in the same
+    # order as `order`
+    for shape_name in reversed(order):
+        idx = key_blocks.find(shape_name)
+        if idx <= 1:
+            # idx == -1 means the shape key does not exist
+            # idx == 0 means the shape key is the reference key (moving it to the top wouldn't do anything anyway)
+            # idx == 1 means that moving the shape key to the top would cause it to replace the reference key, we do
+            #   not want this to happen as we have already set the reference key if it was found.
+            continue
+
+        mesh_obj.active_shape_key_index = idx
+        move_active_shape_key_to_top()
+        # Since we've called an operator, we'll re-get the key_blocks in-case the existing reference is no
+        # longer valid.
+        key_blocks = mesh.shape_keys.key_blocks
+        current_step += 1
+        wm.progress_update(current_step)
+
+    wm.progress_end()
+
+
+def sort_shape_keys(mesh_obj, shape_key_order=None, reference_key_name='Basis', include_vrc=True, include_cats=True):
+    """Sort shape keys such that the shape keys in shape_key_order that exist are ordered sequentially from the top of
+    the shape keys list of the mesh.
+
+    reference_key_name is the name of the shape key that will be set as the reference shape key, uses the existing
+    reference shape key when reference_key_name=None.
+    include_vrc=True will prepend the vrc. shape keys to shape_key_order, this is useful for VRChat Avatars 2.0 where
+    shape keys for eyes and visemes are activated based on their indices.
+    include_cats=True will prepend Cats-specific shape keys to shape_key_order (after include_vrc=True). Currently, this
+    is only '{reference_key_name} Original'."""
     context = bpy.context
-    mesh = context.view_layer.objects[mesh_name]
+
+    if isinstance(mesh_obj, str):
+        mesh = bpy.data.objects[mesh_obj]
+    else:
+        mesh = mesh_obj
     if not has_shapekeys(mesh):
         return
-    set_active(mesh)
 
     if not shape_key_order:
         shape_key_order = []
 
-    order = [
-        'Basis',
-        'vrc.blink_left',
-        'vrc.blink_right',
-        'vrc.lowerlid_left',
-        'vrc.lowerlid_right',
-        'vrc.v_aa',
-        'vrc.v_ch',
-        'vrc.v_dd',
-        'vrc.v_e',
-        'vrc.v_ff',
-        'vrc.v_ih',
-        'vrc.v_kk',
-        'vrc.v_nn',
-        'vrc.v_oh',
-        'vrc.v_ou',
-        'vrc.v_pp',
-        'vrc.v_rr',
-        'vrc.v_sil',
-        'vrc.v_ss',
-        'vrc.v_th',
-        'Basis Original'
-    ]
+    if reference_key_name is None:
+        reference_key_name = mesh.data.shape_keys.reference_key.name
 
+    # reference_key_name is handled separately from `order` and is always moved to the very top, replacing the reference
+    # shape key.
+    # Other shape keys are only moved as high as the second position, to not replace the reference shape key.
+    if include_vrc:
+        order = [
+            'vrc.blink_left',
+            'vrc.blink_right',
+            'vrc.lowerlid_left',
+            'vrc.lowerlid_right',
+            'vrc.v_aa',
+            'vrc.v_ch',
+            'vrc.v_dd',
+            'vrc.v_e',
+            'vrc.v_ff',
+            'vrc.v_ih',
+            'vrc.v_kk',
+            'vrc.v_nn',
+            'vrc.v_oh',
+            'vrc.v_ou',
+            'vrc.v_pp',
+            'vrc.v_rr',
+            'vrc.v_sil',
+            'vrc.v_ss',
+            'vrc.v_th',
+        ]
+    else:
+        order = []
+
+    if include_cats:
+        order.append(reference_key_name + ' Original')
+
+    used_names = set(order)
+
+    if reference_key_name in used_names:
+        print(f"Reference shape key '{reference_key_name}' is already present in the shape key order, this should not"
+              f"happen.")
+        # Remove reference_key_name from the list
+        order.pop(order.index(reference_key_name))
+
+    used_names.add(reference_key_name)
+
+    # Append the extra names
     for shape in shape_key_order:
-        if shape not in order:
+        if shape not in used_names:
             order.append(shape)
+            used_names.add(shape)
 
-    wm = bpy.context.window_manager
-    current_step = 0
-    wm.progress_begin(current_step, len(order))
+    # Store the active shape key index, so it can be restored after sorting is complete.
+    orig_active_index = mesh.active_shape_key_index
 
-    i = 0
-    for name in order:
-        if name == 'Basis' and 'Basis' not in mesh.data.shape_keys.key_blocks:
-            i += 1
-            current_step += 1
-            wm.progress_update(current_step)
-            continue
+    wm = context.window_manager
+    context_override = dict(object=mesh)
+    op = bpy.ops.object.shape_key_move
+    # passing a context override as the first argument to an operator is deprecated as of Blender 3.2.
+    if bpy.app.version >= (3, 2):
+        with context.temp_override(**context_override):
+            _sort_shape_keys(mesh, wm, order, reference_key_name, partial(op, type='TOP'))
+    else:
+        _sort_shape_keys(mesh, wm, order, reference_key_name, partial(op, context_override, type='TOP'))
 
-        for index, shapekey in enumerate(mesh.data.shape_keys.key_blocks):
-            if shapekey.name == name:
-
-                mesh.active_shape_key_index = index
-                new_index = i
-                index_diff = (index - new_index)
-
-                if new_index >= len(mesh.data.shape_keys.key_blocks):
-                    bpy.ops.object.shape_key_move(type='BOTTOM')
-                    break
-
-                position_correct = False
-                if 0 <= index_diff <= (new_index - 1):
-                    while position_correct is False:
-                        if mesh.active_shape_key_index != new_index:
-                            bpy.ops.object.shape_key_move(type='UP')
-                        else:
-                            position_correct = True
-                else:
-                    if mesh.active_shape_key_index > new_index:
-                        bpy.ops.object.shape_key_move(type='TOP')
-
-                    position_correct = False
-                    while position_correct is False:
-                        if mesh.active_shape_key_index != new_index:
-                            bpy.ops.object.shape_key_move(type='DOWN')
-                        else:
-                            position_correct = True
-
-                i += 1
-                break
-
-        current_step += 1
-        wm.progress_update(current_step)
-
-    mesh.active_shape_key_index = 0
-
-    wm.progress_end()
+    # Restore the active shape key index
+    mesh.active_shape_key_index = orig_active_index
 
 
 def delete_hierarchy(parent):
