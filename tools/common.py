@@ -10,6 +10,9 @@ from bpy.types import (
     Key,
     ShapeKey,
     AnimData,
+    Context,
+    Object,
+    Mesh,
 )
 
 from math import degrees
@@ -870,48 +873,56 @@ def separate_by_loose_parts(context, mesh):
     update_material_list()
 
 
-def separate_by_shape_keys(context, mesh):
-    prepare_separation(mesh)
-
-    switch('EDIT')
-    bpy.ops.mesh.select_mode(type="VERT")
-    bpy.ops.mesh.select_all(action='DESELECT')
-
-    switch('OBJECT')
-    selected_count = 0
-    max_count = 0
-    if has_shapekeys(mesh):
-        for kb in mesh.data.shape_keys.key_blocks:
-            for i, (v0, v1) in enumerate(zip(kb.relative_key.data, kb.data)):
-                max_count += 1
-                if v0.co != v1.co:
-                    mesh.data.vertices[i].select = True
-                    selected_count += 1
-
-    if not selected_count or selected_count == max_count:
+def separate_by_shape_keys(context: Context, mesh_obj: Object):
+    # TODO: Add support for separating multiple selected meshes simultaneously.
+    mesh: Mesh = mesh_obj.data
+    if not has_shapekeys(mesh_obj) or len(mesh.shape_keys.key_blocks) < 2:
         return False
 
-    switch('EDIT')
-    bpy.ops.mesh.select_all(action='INVERT')
+    prepare_separation(mesh_obj)
 
+    # Enable only vertex selection mode
+    context.tool_settings.mesh_select_mode = (True, False, False)
+
+    switch('OBJECT')
+    # Select all vertices of the mesh that are not moved by shape keys.
+    vertex_selection = np.full(len(mesh.vertices), True, dtype=bool)
+    cached_co_getter = cache(_get_shape_key_co)
+    for kb in mesh.shape_keys.key_blocks[1:]:
+        relative_key = kb.relative_key
+        if kb == relative_key:
+            continue
+        same = cached_co_getter(kb) == cached_co_getter(relative_key)
+        vertex_not_moved_by_shape_key = np.all(same.reshape(-1, 3), axis=1)
+        vertex_selection &= vertex_not_moved_by_shape_key
+
+    if not vertex_selection.any() or vertex_selection.all():
+        return False
+
+    # Set the selection
+    mesh.vertices.foreach_set("select", vertex_selection)
+    # And ensure all the vertices are visible
+    mesh.vertices.foreach_set("hide", np.full(len(mesh.vertices), False, dtype=bool))
+
+    # Separating by selection only works from Edit mode.
+    switch('EDIT')
+    selected_objects_before_separate = set(context.selected_objects)
     bpy.ops.mesh.separate(type='SELECTED')
 
-    for ob in context.selected_objects:
-        if ob.type == 'MESH':
-            active_tmp = context.view_layer.objects.active
-            if ob != active_tmp:
-                print('not active', ob.name)
-                ob.name = ob.name.replace('.001', '') + '.no_shapes'
-                set_active(ob)
-                bpy.ops.object.shape_key_remove(all=True)
-                set_active(active_tmp)
-                select(ob, False)
-            else:
-                print('active', ob.name)
-                clean_shapekeys(ob)
-                switch('OBJECT')
+    # Since we selected all vertices which are not moved by shape keys, the new mesh will be only those parts.
+    no_shapes_mesh_obj = next(obj for obj in context.selected_objects if obj not in selected_objects_before_separate)
+    # If the name of the new object ends in ".###" where "#" is any digit, exclude the ".###" ending from the new
+    # name of the mesh without shape keys.
+    old_name = no_shapes_mesh_obj.name
+    if re.fullmatch(r".+\.\d\d\d", old_name):
+        new_name_base = old_name.name[:-4]
+    else:
+        new_name_base = old_name.name
+    no_shapes_mesh_obj.name = new_name_base + ".no_shapes"
+    # Delete all of its shape keys.
+    no_shapes_mesh_obj.shape_key_clear()
 
-    utils.clearUnusedMeshes()
+    switch('OBJECT')
 
     # Update the material list of the Material Combiner
     update_material_list()
