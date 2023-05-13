@@ -160,10 +160,6 @@ OptimizePanel.matCombOutdated4,in the 'MatCombiner' tab to the right.,'MatCombin
 OptimizePanel.matCombOutdated6,Or download and install it manually:,または手動でダウンロードしてインストールする:,혹은 직접 다운로드와 설치하기:
 OptimizePanel.matCombOutdated6_alt,Download and install it manually:,手動でダウンロードしてインストールする:,직접 다운로드와 설치하기:
 OptimizePanel.matCombNotInstalled,Material Combiner is not installed!,マテリアル コンバイナーがインストールされていません!,매테리얼 통합기가 설치되지 않았습니다!
-CopyProtectionPanel.label,Copy Protection,コピープロテクション,복사핵 방지
-CopyProtectionPanel.desc1,Tries to protect your avatar from Unity cache ripping.,Unity キャッシュリッピングからアバターを保護しようとします。,유니티 캐쉬뜨기로부터 당신의 아바타를 보호하세요.
-CopyProtectionPanel.desc2,This protection is not 100% safe!,この保護は100%安全ではありません!,이 방법도 100% 안전하지는 않습니다!
-CopyProtectionPanel.desc3,Before use: Read the documentation!,使用前: ドキュメントを読んでください!,사용 전에: 문서를 읽어주세요!
 ScalingPanel.label,Model Scaling,,
 ScalingPanel.imscaleDisabled1,Immersive Scaler is not enabled!,,
 ScalingPanel.imscaleDisabled2,Enable it in your user preferences:,,
@@ -295,15 +291,6 @@ Very useful for manual decimation",,"선택된 메쉬를 두 부분으로 나누
 
 수동으로 데시메이션을 할 시 매우 유용합니다"
 SeparateByShapekeys.success,Successfully separated by shape keys.,,성공적으로 쉐이프키별로 분리됐습니다.
-SeparateByCopyProtection.label,Separate by Copy Protection,コピープロテクションに分離する,복사핵 방지로 분리하기
-SeparateByCopyProtection.desc,"Separates selected mesh into two parts,
-depending on whether it is effected by the Cats Copy Protection or not.
-
-Useful if you have the Copy Protection enabled on multiple selected parts of your model",,"선택된 메쉬를 두 부분으로 나누는데,
-Cats의 복사핵 방지의 영향을 받는지 여부에 따라 결정됩니다.
-
-모델의 여러 부분에서 복사 방지를 활성화 한 경우 유용합니다."
-SeparateByCopyProtection.success,Successfully separated by shape keys.,,성공적으로 쉐이프키별로 분리됐습니다.
 SeparateByX.error.noMesh,No meshes found!,,메쉬가 발견되지 않음!
 SeparateByX.error.multipleMesh,"Multiple meshes found!
 Please select the mesh you want to separate!",,"여러 메쉬들이 발견됨!
@@ -452,16 +439,6 @@ BoneMergeButton.desc,"Merges the given percentage of bones together.
 This is useful to reduce the amount of bones used by Dynamic Bones.",,
 BoneMergeButton.success,Merged bones.,,
 ShowError.label,Report: Error,レポート: エラー,
-CopyProtectionEnable.label,Enable Protection,保護を有効にする,보호 활성화
-CopyProtectionEnable.desc,"Protects your model from piracy. NOT a 100% safe protection!
-Read the documentation before use",,
-CopyProtectionEnable.success,Model secured!,,
-CopyProtectionDisable.label,Disable Protection,保護を無効にする,보호 비활성화
-CopyProtectionDisable.desc,Removes the copy protections from this model.,,
-CopyProtectionDisable.success,Model un-secured!,,
-ProtectionTutorialButton.label,Go to Documentation,ドキュメントに移動,문서로 이동
-ProtectionTutorialButton.URL,https://github.com/michaeldegroot/cats-blender-plugin#copy-protection,,
-ProtectionTutorialButton.success,Documentation,,
 ForumButton.label,Go to the Forums,フォーラムに移動する,포럼으로 가기
 ForumButton.URL,https://vrcat.club/threads/cats-blender-plugin.6/,,
 ForumButton.success,Forum opened.,,
