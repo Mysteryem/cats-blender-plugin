@@ -6,12 +6,18 @@ import time
 import bmesh
 import numpy as np
 
+from bpy.types import (
+    Key,
+    ShapeKey,
+    AnimData,
+)
+
 from math import degrees
 from mathutils import Vector
 from datetime import datetime
 from html.parser import HTMLParser
 from html.entities import name2codepoint
-from functools import partial
+from functools import partial, cache
 from typing import Callable
 
 from . import common as Common
@@ -984,25 +990,169 @@ def prepare_separation(mesh):
     clean_material_names(mesh)
 
 
-def clean_shapekeys(mesh):
-    # Remove empty shapekeys
-    if has_shapekeys(mesh):
-        for kb in mesh.data.shape_keys.key_blocks:
-            if can_remove_shapekey(kb):
-                mesh.shape_key_remove(kb)
-        if len(mesh.data.shape_keys.key_blocks) == 1:
-            mesh.shape_key_remove(mesh.data.shape_keys.key_blocks[0])
-
-
-def can_remove_shapekey(key_block):
-    if 'mmd_' in key_block.name:
-        return True
+def _is_shapekey_used(key_block: ShapeKey, co_getter=None):
     if key_block.relative_key == key_block:
-        return False  # Basis
-    for v0, v1 in zip(key_block.relative_key.data, key_block.data):
-        if v0.co != v1.co:
-            return False
-    return True
+        # Basis-like, we consider the shape key to be used.
+        return True
+
+    rel_data = key_block.relative_key.data
+    key_data = key_block.data
+
+    num_to_initially_check = 20
+    num_co = len(key_data)
+    if num_to_initially_check < num_co:
+        # Only initially check a few for performance, spreading out which indices are checked to increase the
+        # chances of picking co in areas where the shape key is used (as opposed to picking the first X which is
+        # likely to result in picking vertices that are nearby one another)
+        step = num_co // num_to_initially_check + (1 if num_co % num_to_initially_check != 0 else 0)
+        for i in range(0, num_co, step):
+            r_i = rel_data[i]
+            k_i = key_data[i]
+            if r_i.co != k_i.co:
+                return True
+    # If all have been the same so far, check the rest using numpy for performance
+    # co are flattened so the arrays end up with length 3 times the number of co
+    if co_getter:
+        relative_co_flat = co_getter(key_block.relative_key)
+        co_flat = co_getter(key_block)
+    else:
+        relative_co_flat = np.empty(num_co * 3, dtype=np.single)
+        co_flat = np.empty(num_co * 3, dtype=np.single)
+        key_block.relative_key.data.foreach_get('co', relative_co_flat)
+        key_block.data.foreach_get('co', co_flat)
+    return not np.array_equal(relative_co_flat, co_flat)
+
+
+def _can_remove_shapekey(key_block: bpy.types.ShapeKey, cached_co_getter=None):
+    name = key_block.name
+    if name.startswith("vrc."):
+        # Cats generated blinking/eyelid and viseme blendshapes all start with "vrc.". The "vrc.v_pp" and "vrc.v_sil"
+        # shapes don't actually move any vertices, but need to be kept.
+        return False
+
+    shape_keys: bpy.types.Key = key_block.id_data
+    reference_key = shape_keys.reference_key
+    if key_block == reference_key or key_block.name == reference_key.name + " Original":
+        # The reference key should not be removed.
+        # Cats adds a `f"{reference_key.name} Original"` for some operations that change the reference key. It would
+        # usually be determined by later checks that it cannot be removed, but we'll check specifically for it.
+        return False
+
+    return not _is_shapekey_used(key_block, cached_co_getter)
+
+
+def _get_shape_key_co(key_block):
+    key_data = key_block.data
+    num_co = len(key_data)
+    # Each co has x,y and z components, so when flattened, the array will be 3 times the size.
+    # The co are single precision float.
+    co_flat = np.empty(num_co * 3, dtype=np.single)
+    key_data.foreach_get('co', co_flat)
+    return co_flat
+
+
+def _get_animated_and_driver_target_shapes(shape_keys: Key) -> set[ShapeKey]:
+    cached_path_resolve = cache(shape_keys.path_resolve)
+    used_shape_keys = set()
+
+    # Check for animations that use the shape keys
+    anim_data = shape_keys.animation_data
+    if anim_data:
+        action = anim_data.action
+        if action:
+            for fcurve in action.fcurves:
+                likely_shape_key = getattr(cached_path_resolve(fcurve.data_path, False), "data", None)
+                if isinstance(likely_shape_key, ShapeKey):
+                    used_shape_keys.add(likely_shape_key)
+
+    # Check for drivers that use the shape key(s)
+    # There's no way to directly find what drivers have a specific shape key as a target, but we can reduce the number
+    # of IDs to check by finding all users of the shape_key ID.
+    user_map = bpy.data.user_map(subset=[shape_keys])
+    users_set = user_map[shape_keys]
+    for user in users_set:
+        anim_data: AnimData = getattr(user, "animation_data", None)
+        if anim_data is None:
+            continue
+        for driver_fcurve in anim_data.drivers:
+            driver = driver_fcurve.driver
+            if not driver.is_valid:
+                # Driver is invalid, skip.
+                continue
+            for variable in driver.variables:
+                for target in variable.targets:
+                    if target.id_type != 'KEY' or target.id != shape_keys:
+                        continue
+                    likely_shape_key = getattr(cached_path_resolve(target.data_path, False), "data", None)
+                    if isinstance(likely_shape_key, ShapeKey):
+                        used_shape_keys.add(likely_shape_key)
+
+    return used_shape_keys
+
+
+def clean_shapekeys(mesh_obj):
+    """Remove empty non-reference shape keys that are not used by other shape keys, animations or drivers.
+
+    If there is only one shape key at the end it is removed."""
+    if has_shapekeys(mesh_obj):
+        mesh = mesh_obj.data
+        shape_keys = mesh.shape_keys
+        key_blocks = shape_keys.key_blocks
+
+        # Get all keys that other keys are relative to, these keys cannot be removed unless all keys that are relative
+        # to them are deleted.
+        # This dict keeps track of the shape keys as shape keys are marked for removal.
+        relative_keys_to_users: dict[bpy.types.ShapeKey, set[bpy.types.ShapeKey]] = {}
+        for kb in key_blocks:
+            relative_keys_to_users.setdefault(kb.relative_key, set()).add(kb)
+
+        # Get all keys used in animation or as driver targets
+        used_in_animations_or_drivers = _get_animated_and_driver_target_shapes(key_blocks)
+
+        # Wrap the function to get shape key co with a cache so that each shape key co only needs to be retrieved at
+        # most once.
+        cached_co_getter = cache(_get_shape_key_co)
+
+        # List of shape keys that could be removed depending on whether other shape keys are removed.
+        shape_keys_to_maybe_keep = [kb for kb in key_blocks[1:] if kb not in used_in_animations_or_drivers]
+
+        # List of the names of shape keys that will be deleted.
+        # We collect the names of the shape keys to remove and remove the shape keys at the end, because it's safer than
+        # assuming that references to other shape keys will remain valid after removing a shape key.
+        # This also avoids issues where deleting a shape key will change the relative key of all shape keys where the
+        # deleted shape key was their relative key, which can change whether the affected shape keys can be removed.
+        shape_key_names_to_remove = []
+        while True:
+            shape_keys_to_maybe_keep_new = []
+
+            # Iterate a copy of the set because removing elements from the set while iterating it would be an error.
+            for kb in shape_keys_to_maybe_keep:
+                if relative_keys_to_users.get(kb):
+                    # Key is still used by other keys, but removing other shape keys could mean that it can be removed.
+                    # We could check can_remove_shapekey to determine if this shape key definitely must be kept, but
+                    # this can be a much slower check, so we won't do it unless we have to.
+                    shape_keys_to_maybe_keep_new.append(kb)
+                elif _can_remove_shapekey(kb, cached_co_getter):
+                    # With the shape marked for removal, remove it from its relative key's users.
+                    relative_keys_to_users[kb.relative_key].remove(kb)
+                    shape_key_names_to_remove.append(kb.name)
+
+            if shape_keys_to_maybe_keep_new == shape_keys_to_maybe_keep:
+                # If there's no change after iterating, then no further iterations will have an effect, so we're done.
+                break
+            else:
+                shape_keys_to_maybe_keep = shape_keys_to_maybe_keep_new
+
+        # Now actually remove the shape keys.
+        for kb_name in shape_key_names_to_remove:
+            mesh_obj.shape_key_remove(key_blocks[kb_name])
+
+        # If there's only one shape key remaining, remove it, because it will be the reference key.
+        if len(key_blocks) == 1:
+            # Removing all shape keys will revert the mesh back to the mesh's vertices, which could be different to the
+            # reference shape key, so ensure that the mesh's vertices are synced to the reference shape beforehand.
+            resync_reference_key(mesh)
+            mesh_obj.shape_key_remove(mesh.shape_keys.key_blocks[0])
 
 
 def save_shapekey_order(mesh_name):
