@@ -9,40 +9,6 @@ from .translations import t
 
 
 @register_wrap
-class OneTexPerMatOnlyButton(bpy.types.Operator):
-    bl_idname = 'cats_material.one_tex_only'
-    bl_label = t('OneTexPerMatOnlyButton.label')
-    bl_description = t('OneTexPerMatOnlyButton.desc')
-    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
-
-    @classmethod
-    def poll(cls, context):
-        if Common.get_armature() is None:
-            return False
-        return len(Common.get_meshes_objects(check=False)) > 0
-
-    def execute(self, context):
-        self.report({'ERROR'}, t('ToolsMaterial.error.notCompatible'))
-        return {'CANCELLED'}
-        # TODO
-
-        saved_data = Common.SavedData()
-
-        Common.set_default_stage()
-
-        for mesh in Common.get_meshes_objects():
-            for mat_slot in mesh.material_slots:
-                for i, tex_slot in enumerate(mat_slot.material.texture_slots):
-                    if i > 0 and tex_slot:
-                        tex_slot.texture = None
-
-        saved_data.load()
-
-        self.report({'INFO'}, t('OneTexPerXButton.success'))
-        return{'FINISHED'}
-
-
-@register_wrap
 class StandardizeTextures(bpy.types.Operator):
     bl_idname = 'cats_material.standardize_textures'
     bl_label = t('StandardizeTextures.label')
