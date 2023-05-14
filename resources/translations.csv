@@ -606,8 +606,6 @@ ErrorDisplay.eyes3,"If you want Eye Tracking to work, rename this mesh to 'Body'
 ErrorDisplay.eyes3_alt,Make sure that the mesh containing the eyes is named 'Body' in order,,
 ErrorDisplay.eyes4_alt,to get Eye Tracking to work.,,
 ErrorDisplay.continue,Continue to Export,,
-OneTexPerMatButton.label,One Material Texture,1つのマテリアルテクスチャ,매테리얼당 하나의 텍스처
-OneTexPerMatButton.desc,Have all material slots ignore extra texture slots as these are not used by VRChat.,,
 OneTexPerMatOnlyButton.label,One Material Texture,1つのマテリアルテクスチャ,매테리얼당 하나의 텍스처
 OneTexPerMatOnlyButton.desc,"Have all material slots ignore extra texture slots as these are not used by VRChat.
 Also removes the textures from the material instead of disabling it.
