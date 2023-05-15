@@ -13,6 +13,8 @@ from bpy.types import (
     Context,
     Object,
     Mesh,
+    Node,
+    NodeLink,
 )
 
 from math import degrees
@@ -44,6 +46,21 @@ from mmd_tools_local.panels import view_prop as mmd_view_prop
 #  - Manual bone selection button for root bones
 #  - Checkbox for eye blinking/moving
 #  - Translate progress bar
+
+# Constants used by fix_vrm_shader
+VRM_NODES_TO_KEEP = {"DiffuseColor", "MainTexture", "Emission_Texture"}
+"""Labels of nodes in VRM materials to keep."""
+VRM_HAIR_NODES_TO_KEEP = VRM_NODES_TO_KEEP | {"SphereAddTexture"}
+"""Labels of nodes in VRM hair materials to keep."""
+VRM_UNLINK_OUTPUTS_NODE_ID_NAMES = {
+    "ShaderNodeRGB",
+    "ShaderNodeValue",
+    "ShaderNodeTexImage",
+    "ShaderNodeUVMap",
+    "ShaderNodeMapping",
+}
+"""Nodes with a bl_idname in this set will be removed from VRM materials, unless the label of the node is in
+VRM_NODES_TO_KEEP."""
 
 
 class SavedData:
@@ -1925,50 +1942,55 @@ def fix_mmd_shader(mesh_obj: Object):
         reflect_input.default_value = 1
 
 
-def fix_vrm_shader(mesh):
-    for mat_slot in mesh.material_slots:
-        if mat_slot.material and mat_slot.material.node_tree:
-            is_vrm_mat = False
-            nodes = mat_slot.material.node_tree.nodes
-            for node in nodes:
-                if hasattr(node, 'node_tree') and 'MToon_unversioned' in node.node_tree.name:
-                    node.location[0] = 200
-                    node.inputs['ReceiveShadow_Texture_alpha'].default_value = -10000
-                    node.inputs['ShadeTexture'].default_value = (1.0, 1.0, 1.0, 1.0)
-                    node.inputs['Emission_Texture'].default_value = (0.0, 0.0, 0.0, 0.0)
-                    node.inputs['SphereAddTexture'].default_value = (0.0, 0.0, 0.0, 0.0)
+def fix_vrm_shader(mesh_obj: Object):
+    mtoon_tree = bpy.data.node_groups.get("MToon_unversioned")
+    if not mtoon_tree:
+        # There's no MToon node tree, so either this material can't be a VRM material, or the node tree has been
+        # renamed so we won't be able to detect VRM materials.
+        return
+    for mat_slot in mesh_obj.material_slots:
+        material = mat_slot.material
+        if not material:
+            # Empty material slot.
+            continue
 
-                    # Support typo in old vrm importer
-                    node_input = node.inputs.get('NomalmapTexture') or node.inputs.get('NormalmapTexture')
-                    node_input.default_value = (1.0, 1.0, 1.0, 1.0)
+        node_tree = material.node_tree
+        if not node_tree or not node_tree.contains_tree(mtoon_tree):
+            # Either no node tree, or the node tree does not contain the MToon node group.
+            continue
 
-                    is_vrm_mat = True
-                    break
-            if not is_vrm_mat:
-                continue
+        nodes = node_tree.nodes
 
-            nodes_to_keep = ['DiffuseColor', 'MainTexture', 'Emission_Texture']
-            if 'HAIR' in mat_slot.material.name:
-                nodes_to_keep = ['DiffuseColor', 'MainTexture', 'Emission_Texture', 'SphereAddTexture']
+        # NodeSocket.links has to iterate through all links every time it's called, so we create a dict in advance that
+        # lets us look up the output links of a specific node, so we can quickly unlink all outputs of a node when we
+        # 'delete' it by unlinking its outputs.
+        links = node_tree.links
+        node_to_output_links: dict[Node, list[NodeLink]] = {}
+        for link in links:
+            node_to_output_links.setdefault(link.from_node, []).append(link)
 
-            for node in nodes:
-                # Delete all unneccessary nodes
-                if 'RGB' in node.name \
-                        or 'Value' in node.name \
-                        or 'Image Texture' in node.name \
-                        or 'UV Map' in node.name \
-                        or 'Mapping' in node.name:
-                    if node.label not in nodes_to_keep:
-                        for output in node.outputs:
-                            for link in output.links:
-                                mat_slot.material.node_tree.links.remove(link)
-                        continue
+        nodes_to_keep = VRM_HAIR_NODES_TO_KEEP if "HAIR" in material.name else VRM_NODES_TO_KEEP
+        for node in nodes:
+            bl_idname = node.bl_idname
+            if bl_idname == "ShaderNodeGroup" and node.node_tree == mtoon_tree:
+                node.location[0] = 200
+                node_inputs = node.inputs
 
-                # if hasattr(node, 'node_tree') and 'matcap_vector' in node.node_tree.name:
-                #     for output in node.outputs:
-                #         for link in output.links:
-                #             mat_slot.material.node_tree.links.remove(link)
-                #     continue
+                # If getting any of these inputs fails, then a breaking change has ocurred in Blender/VRM, and we'll
+                # need to update our support.
+                node_inputs['ReceiveShadow_Texture_alpha'].default_value = -10000  # TODO: document this weird value
+                node_inputs['ShadeTexture'].default_value = (1.0, 1.0, 1.0, 1.0)
+                node_inputs['Emission_Texture'].default_value = (0.0, 0.0, 0.0, 0.0)
+                node_inputs['SphereAddTexture'].default_value = (0.0, 0.0, 0.0, 0.0)
+
+                # Support typo in old vrm importer
+                normal_map_input = node.inputs.get('NomalmapTexture') or node.inputs['NormalmapTexture']
+                normal_map_input.default_value = (1.0, 1.0, 1.0, 1.0)
+            # Unlink outputs of all unnecessary nodes
+            elif bl_idname in VRM_UNLINK_OUTPUTS_NODE_ID_NAMES and node.label not in nodes_to_keep:
+                if node in node_to_output_links:
+                    for link in node_to_output_links[node]:
+                        links.remove(link)
 
 
 def fix_twist_bones(mesh, bones_to_delete):
