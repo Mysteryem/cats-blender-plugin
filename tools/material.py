@@ -2,220 +2,247 @@
 
 import os
 import bpy
+from bpy.types import (
+    Mesh,
+    Material,
+    Context,
+    Object,
+    NodeSocket,
+    Node,
+    bpy_prop_array,
+)
+import numpy as np
+from typing import Union, Iterable
 
 from . import common as Common
 from .register import register_wrap
 from .translations import t
 
+IGNORED_MAT_HASH_NODE_LABELS = {"Material Output", "mmd_tex_uv", "Cats Export Shader"}
+IGNORED_MAT_HASH_NODE_NAMES = IGNORED_MAT_HASH_NODE_LABELS  # The same as labels for now.
+IGNORED_MAT_HASH_NODE_ID_NAMES = {"ShaderNodeOutputMaterial"}
+
 
 @register_wrap
 class CombineMaterialsButton(bpy.types.Operator):
-    bl_idname = 'cats_material.combine_mats'
-    bl_label = t('CombineMaterialsButton.label')
-    bl_description = t('CombineMaterialsButton.desc')
+    bl_idname = "cats_material.combine_mats"
+    bl_label = t("CombineMaterialsButton.label")
+    bl_description = t("CombineMaterialsButton.desc")
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    combined_tex = {}
+    @staticmethod
+    def get_meshes():
+        return Common.get_meshes_objects(check=False)
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: Context):
+        if context.mode.startswith("EDIT"):
+            # The meshes to operate on can't be in edit mode, and the current mode can't be an edit mode either,
+            # otherwise undo/redo won't work properly because we will be modifying meshes that are not in the current
+            # edit mode.
+            return False
+
         if Common.get_armature() is None:
             return False
-        return len(Common.get_meshes_objects(check=False)) > 0
 
-    def assignmatslots(self, ob, matlist):
-        context = bpy.context
-        scn = bpy.context.scene
-        ob_active = context.view_layer.objects.active
-        Common.set_active(ob)
+        meshes = cls.get_meshes()
+        if not meshes:
+            return False
 
-        for s in ob.material_slots:
-            bpy.ops.object.material_slot_remove()
+        for me in meshes:
+            if me.mode == 'EDIT':
+                # The material indices of polygons cannot be get/set quickly while a mesh is in edit mode (and
+                # completely different code would be needed).
+                return False
+        return True
 
-        i = 0
-        for m in matlist:
-            mat = bpy.data.materials[m]
-            ob.data.materials.append(mat)
-            i += 1
+    @staticmethod
+    def combine_exact_duplicate_mats(ob: Object, unique_sorted_mat_indices: np.ndarray):
+        mat_names = ob.material_slots.keys()
 
-        Common.set_active(ob_active)
+        # Find duplicate materials and get the first index of the material slot with that same material
+        mat_first_occurrence: dict[str, int] = {}
+        # Note that empty material slots use '' as the material name
+        for i, mat_name in enumerate(mat_names):
+            if mat_name not in mat_first_occurrence:
+                # This is the first time we've seen this material, add it to the first occurrence dict with the current
+                # index
+                mat_first_occurrence[mat_name] = i
+            else:
+                # We've seen this material already, find its occurrences (if any) in the unique mat indices array and
+                # set it to the index of the first occurrence of this material
+                unique_sorted_mat_indices[unique_sorted_mat_indices == i] = mat_first_occurrence[mat_name]
 
-    def cleanmatslots(self):
-        objs = bpy.context.selected_editable_objects
+        return unique_sorted_mat_indices
 
-        for ob in objs:
-            if ob.type == 'MESH':
-                Common.set_active(ob)
-                bpy.ops.object.material_slot_remove_unused()
+    @staticmethod
+    def remove_unused_mat_slots(ob: Object, used_mat_indices: Iterable[int]):
+        mesh: Mesh = ob.data
+        used_mat_indices = set(used_mat_indices)
 
-                #Why do all below when you can just do what is above? - @989onan
+        # We iterate in reverse order, so that removing a material doesn't change the indices of any material slots we
+        # are yet to iterate.
+        for i in reversed(range(len(mesh.materials))):
+            if i not in used_mat_indices:
+                mesh.materials.pop(index=i)
 
+    @staticmethod
+    def generate_mat_hash(mat: Material) -> str:
+        if not mat:
+            return ""
 
-#                mats = ob.material_slots.keys()
+        node_tree = mat.node_tree
+        if not mat.use_nodes or not node_tree:
+            # Materials almost always use nodes, but on the off chance that a material doesn't, create the hash
+            # based on the non-node properties
+            return str(mat.diffuse_color[:]) + str(mat.metallic) + str(mat.roughness) + str(mat.specular_intensity)
 
-#                usedMatIndex = []
-#                faceMats = []
-#                me = ob.data
-#                for f in me.polygons:
-#                    faceindex = f.material_index
-#                    if faceindex >= len(mats):
-#                        continue
+        hash_parts: list[str] = []
+        nodes = mat.node_tree.nodes
 
-#                    currentfacemat = mats[faceindex]
-#                    faceMats.append(currentfacemat)
+        # NodeSocket.links iterates through all links in the node tree every time it is called, we don't want to do this
+        # for every input socket that is linked, so we'll store a mapping from input sockets to links.
+        input_socket_to_from_node_lookup: dict[NodeSocket, Union[Node, set[Node]]] = {}
+        for link in node_tree.links:
+            # Each linked input socket will usually only be linked to one node, since it's typically only geometry nodes
+            # that support sockets with multiple links.
+            to_socket = link.to_socket
+            if to_socket.link_limit == 1:
+                input_socket_to_from_node_lookup[to_socket] = link.from_node
+            else:
+                input_socket_to_from_node_lookup.setdefault(link.to_socket, set()).add(link.from_node)
 
-#                    found = False
-#                    for m in usedMatIndex:
-#                        if m == faceindex:
-#                            found = True
+        # TODO: The iteration through nodes in this function needs a re-work because the order of the nodes in a node
+        #  tree is not well-defined and can change even when only changing which node is active. Iterating the entire
+        #  node tree also means disconnected nodes are included in the hash which is not ideal.
+        for node in nodes:
+            node_name = node.name
 
-#                    if found == False:
-#                        usedMatIndex.append(faceindex)
+            # Skip certain known nodes
+            if node_name in IGNORED_MAT_HASH_NODE_NAMES:
+                continue
+            if node.label in IGNORED_MAT_HASH_NODE_LABELS:
+                continue
+            node_idname = node.bl_idname
+            if node_idname in IGNORED_MAT_HASH_NODE_ID_NAMES:
+                continue
+            # Skip nodes with no input
+            node_inputs = node.inputs
+            if not node_inputs:
+                continue
 
-#                ml = []
-#                mnames = []
-#                for u in usedMatIndex:
-#                    ml.append(mats[u])
-#                    mnames.append(mats[u])
-
-#                self.assignmatslots(ob, ml)
-
-#                i = 0
-#                for f in me.polygons:
-#                    if i >= len(faceMats):
-#                        continue
-#                    matindex = mnames.index(faceMats[i])
-#                    f.material_index = matindex
-#                    i += 1
-
-    # Iterates over each material slot and hashes combined image filepaths and material settings
-    # Then uses this hash as the dict keys and material data as values
-    def generate_combined_tex(self):
-        self.combined_tex = {}
-        for ob in Common.get_meshes_objects():
-            for index, mat_slot in enumerate(ob.material_slots):
-                hash_this = ''
-                ignore_nodes = ['Material Output', 'mmd_tex_uv', 'Cats Export Shader']
-
-                if mat_slot.material and mat_slot.material.node_tree:
-                    # print('MAT: ', mat_slot.material.name)
-                    nodes = mat_slot.material.node_tree.nodes
-                    for node in nodes:
-
-                        # Skip certain known nodes
-                        if node.name in ignore_nodes or node.label in ignore_nodes:
-                            continue
-
-                        # Add images to hash and skip toon and shpere textures
-                        if node.type == 'TEX_IMAGE':
-                            image = node.image
-                            if 'toon' in node.name or 'sphere' in node.name:
-                                nodes.remove(node)
-                                continue
-                            if not image:
-                                nodes.remove(node)
-                                continue
-                            # print('  ', node.name)
-                            # print('    ', image.name)
-                            hash_this += node.name + image.name
-                            continue
-                        # Skip nodes with no input
-                        if not node.inputs:
-                            continue
-
-                        # On MMD models only add diffuse and transparency to the hash
-                        if node.name == 'mmd_shader':
-                            # print('  ', node.name)
-                            # print('    ', node.inputs['Diffuse Color'].default_value[:])
-                            # print('    ', node.inputs['Alpha'].default_value)
-                            hash_this += node.name\
-                                         + str(node.inputs['Diffuse Color'].default_value[:])\
-                                         + str(node.inputs['Alpha'].default_value)
-                            continue
-
-                        # Add all other nodes to the hash
-                        # print('  ', node.name)
-                        hash_this += node.name
-                        for input, value in node.inputs.items():
-                            if hasattr(value, 'default_value'):
-                                try:
-                                    # print('    ', input, value.default_value[:])
-                                    hash_this += str(value.default_value[:])
-                                except TypeError:
-                                    # print('    ', input, value.default_value)
-                                    hash_this += str(value.default_value)
-                            else:
-                                # print('    ', input, 'name:', value.name)
-                                hash_this += value.name
-
-                # Now create or add to the dict key that has this hash value
-                if hash_this not in self.combined_tex:
-                    self.combined_tex[hash_this] = []
-                self.combined_tex[hash_this].append({'mat': mat_slot.name, 'index': index})
-
-        # for key, value in self.combined_tex.items():
-        #     print(key)
-        #     for mat in value:
-        #         print(mat)
-
-    def execute(self, context):
-        print('COMBINE MATERIALS!')
-        saved_data = Common.SavedData()
-
-        Common.set_default_stage()
-        self.generate_combined_tex()
-        Common.switch('OBJECT')
-        i = 0
-
-        for index, mesh in enumerate(Common.get_meshes_objects()):
-
-            Common.unselect_all()
-            Common.set_active(mesh)
-            for file in self.combined_tex:  # for each combined mat slot of scene object
-                combined_textures = self.combined_tex[file]
-
-                # Combining material slots that are similar with only themselves are useless
-                if len(combined_textures) <= 1:
+            # Add images to hash and skip toon and sphere textures used by mmd
+            if node_idname == "ShaderNodeTexImage":
+                if "toon" in node_name or "sphere" in node_name:
                     continue
-                i += len(combined_textures)
+                image = node.image
+                if not image:
+                    continue
+                hash_parts.append(node_name)
+                hash_parts.append(image.name)
+            # On MMD models only add diffuse and transparency to the hash
+            elif node_idname == "ShaderNodeGroup" and node_name == "mmd_shader":
+                hash_parts.append(node_name)
+                hash_parts.append(str(node_inputs["Diffuse Color"].default_value[:]))
+                hash_parts.append(str(node_inputs["Alpha"].default_value))
+            else:
+                # Add the node name and its inputs to the hash
+                hash_parts.append(node_name)
+                for node_input in node_inputs:
+                    if node_input.is_linked:
+                        from_node = input_socket_to_from_node_lookup[node_input]
+                        if isinstance(from_node, Node):
+                            hash_parts.append(from_node.name)
+                        else:
+                            from_nodes = from_node
+                            for from_node in from_nodes:
+                                hash_parts.append(from_node.name)
+                    elif (node_input_default_value := getattr(node_input, "default_value", None)) is not None:
+                        if isinstance(node_input_default_value, bpy_prop_array):
+                            # Should be NodeSockets with the 'VECTOR' and 'RGBA' types.
+                            hash_parts.append(str(node_input_default_value[:]))
+                        else:
+                            hash_parts.append(str(node_input_default_value))
+                    else:
+                        hash_parts.append(node_input.name)
 
-                # print('NEW', file, combined_textures, len(combined_textures))
-                Common.switch('EDIT')
-                bpy.ops.mesh.select_all(action='DESELECT')
+        return "".join(hash_parts)
 
-                # print('UNSELECT ALL')
-                for mat in mesh.material_slots:  # for each scene object material slot
-                    for tex in combined_textures:
-                        if mat.name == tex['mat']:
-                            mesh.active_material_index = tex['index']
-                            bpy.ops.object.material_slot_select()
-                            # print('SELECT', tex['mat'], tex['index'])
+    def execute(self, context: Context) -> set[str]:
+        print("COMBINE MATERIALS!")
+        num_combined = 0
 
-                bpy.ops.object.material_slot_assign()
-                # print('ASSIGNED TO SLOT INDEX', bpy.context.object.active_material_index)
-                bpy.ops.mesh.select_all(action='DESELECT')
+        # Hashes of all found materials
+        mat_hashes: dict[str, str] = {}
+        # The first material found for each hash
+        first_mats_by_hash: dict[str, Material] = {}
+        for mesh_obj in self.get_meshes():
+            # Generate material hashes and re-assign material slots to the first found material that produces the same
+            # hash.
+            for mat_name, mat_slot in mesh_obj.material_slots.items():
+                mat = mat_slot.material
 
-            Common.unselect_all()
-            Common.set_active(mesh)
-            Common.switch('OBJECT')
-            self.cleanmatslots()
+                # Get the material hash, generating it if needed
+                if mat_name not in mat_hashes:
+                    mat_hash = self.generate_mat_hash(mat)
+                    mat_hashes[mat_name] = mat_hash
+                else:
+                    mat_hash = mat_hashes[mat_name]
+
+                # If a material with the same hash has already been found, re-assign the material slot to the previously
+                # found material, otherwise, add the material to the dictionary of first found materials
+                if mat_hash in first_mats_by_hash:
+                    replacement_material = first_mats_by_hash[mat_hash]
+                    # The replacement_material material could be the current material if the current material was also
+                    # used on another mesh that was iterated before this mesh.
+                    if mat != replacement_material:
+                        mat_slot.material = replacement_material
+                        num_combined += 1
+                else:
+                    first_mats_by_hash[mat_hash] = mat
+            # Combine exact duplicate materials within the same mesh
+            mesh: Mesh = mesh_obj.data
+            if bpy.app.version < (3, 4):
+                material_indices_collection = mesh.polygons
+                data_attribute = "material_index"
+                data_dtype = np.ushort
+            else:
+                attribute = mesh.attributes.get("material_index")
+                if attribute.domain != 'FACE' or attribute.data_type != 'INT':
+                    material_indices_collection = None
+                else:
+                    material_indices_collection = attribute.data
+                data_attribute = "value"
+                data_dtype = np.intc
+
+            if material_indices_collection:
+                # Get polygon material indices
+                material_indices = np.empty(len(material_indices_collection), dtype=data_dtype)
+                material_indices_collection.foreach_get(data_attribute, material_indices)
+
+                # Find unique sorted material indices and get the inverse array to reconstruct the material indices
+                # array.
+                unique_sorted_material_indices, unique_inverse = np.unique(material_indices, return_inverse=True)
+                # Working with only the unique material indices means we don't need to operate on the entire array.
+                combined_material_indices = self.combine_exact_duplicate_mats(mesh_obj, unique_sorted_material_indices)
+
+                # Update the material indices
+                material_indices_collection.foreach_set(data_attribute, combined_material_indices[unique_inverse])
+            else:
+                combined_material_indices = [0]
+
+            # Remove any unused material slots
+            self.remove_unused_mat_slots(mesh_obj, combined_material_indices)
 
             # Clean material names
-            Common.clean_material_names(mesh)
+            Common.clean_material_names(mesh_obj)
 
-            # print('CLEANED MAT SLOTS')
-
-        # Update the material list of the Material Combiner
-        Common.update_material_list()
-
-        saved_data.load()
-
-        if i == 0:
-            self.report({'INFO'}, t('CombineMaterialsButton.error.noChanges'))
+        if num_combined == 0:
+            self.report({'INFO'}, t("CombineMaterialsButton.error.noChanges"))
         else:
-            self.report({'INFO'}, t('CombineMaterialsButton.success', number=str(i)))
+            self.report({'INFO'}, t("CombineMaterialsButton.success", number=str(num_combined)))
 
-        return{'FINISHED'}
+        return {'FINISHED'}
 
 
 @register_wrap
