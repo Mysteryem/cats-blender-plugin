@@ -1904,13 +1904,25 @@ def add_principled_shader(mesh):
             mat_slot.material.node_tree.links.new(node_principled.outputs['BSDF'], node_output.inputs['Surface'])
 
 
-def fix_mmd_shader(mesh):
-    for mat_slot in mesh.material_slots:
-        if mat_slot.material and mat_slot.material.node_tree:
-            nodes = mat_slot.material.node_tree.nodes
-            for node in nodes:
-                if node.name == 'mmd_shader':
-                    node.inputs['Reflect'].default_value = 1
+def fix_mmd_shader(mesh_obj: Object):
+    for mat_slot in mesh_obj.material_slots:
+        material = mat_slot.material
+        if not material:
+            continue
+
+        node_tree = material.node_tree
+        if not node_tree:
+            continue
+
+        mmd_shader_node = node_tree.nodes.get("mmd_shader")
+        if not mmd_shader_node:
+            continue
+
+        reflect_input = mmd_shader_node.inputs.get("Reflect")
+        if not reflect_input:
+            continue
+
+        reflect_input.default_value = 1
 
 
 def fix_vrm_shader(mesh):
