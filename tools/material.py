@@ -10,9 +10,12 @@ from bpy.types import (
     NodeSocket,
     Node,
     bpy_prop_array,
+    ShaderNode,
+    ShaderNodeTree,
 )
 import numpy as np
-from typing import Union, Iterable
+from typing import Iterable
+from collections import deque
 
 from . import common as Common
 from .register import register_wrap
@@ -21,6 +24,59 @@ from .translations import t
 IGNORED_MAT_HASH_NODE_LABELS = {"Material Output", "mmd_tex_uv", "Cats Export Shader"}
 IGNORED_MAT_HASH_NODE_NAMES = IGNORED_MAT_HASH_NODE_LABELS  # The same as labels for now.
 IGNORED_MAT_HASH_NODE_ID_NAMES = {"ShaderNodeOutputMaterial"}
+
+
+def _prepare_walk_node_tree(node_tree: ShaderNodeTree):
+    unique_output_nodes: set[ShaderNode] = set()
+    output_nodes: list[ShaderNode] = []
+    for target in ShaderNodeTree.bl_rna.functions["get_output_node"].parameters["target"].enum_items:
+        output_node = node_tree.get_output_node(target=target.identifier)
+        if output_node and output_node not in unique_output_nodes:
+            unique_output_nodes.add(output_node)
+            output_nodes.append(output_node)
+
+    # Build a dict of input sockets to from_nodes because NodeSocket.links has to iterate through all the links in the
+    # node tree every time it's accessed.
+    input_socket_to_from_node_lookup: dict[NodeSocket, set[ShaderNode]] = {}
+    for link in node_tree.links:
+        if not link.is_valid:
+            continue
+        # Each linked input socket will usually only be linked to one node, since it's typically only geometry nodes
+        # that support sockets with multiple links.
+        input_socket_to_from_node_lookup.setdefault(link.to_socket, set()).add(link.from_node)
+
+    return output_nodes, input_socket_to_from_node_lookup
+
+
+def _walk_node_tree(start_nodes: Iterable[Node], input_socket_to_from_node_lookup: dict[NodeSocket, set[Node]], order='DEPTH'):
+    """Return an iterator through the nodes in a shader node tree.
+    The node tree must not be modified while iterating."""
+    # Set of all visited nodes so far.
+    visited_node_set = set()
+    # Using a deque seems faster than chaining itertools.chain or using recursion.
+    node_deque = deque(start_nodes)
+
+    # Get functions outside the loop to avoid having to look up each function by name on each call within the hot loop.
+    if order == 'DEPTH':
+        extend = node_deque.extendleft
+    elif order == 'BREADTH':
+        extend = node_deque.extend
+    else:
+        raise ValueError(f"order '{order}' not recognised, must be in ['DEPTH', 'BREADTH']")
+    popleft = node_deque.popleft
+    add_visited = visited_node_set.add
+
+    while node_deque:
+        node = popleft()
+        if node in visited_node_set:
+            continue
+        add_visited(node)
+
+        yield node
+
+        for input_socket in node.inputs:
+            if input_socket in input_socket_to_from_node_lookup:
+                extend(input_socket_to_from_node_lookup[input_socket])
 
 
 @register_wrap
@@ -98,24 +154,9 @@ class CombineMaterialsButton(bpy.types.Operator):
             return str(mat.diffuse_color[:]) + str(mat.metallic) + str(mat.roughness) + str(mat.specular_intensity)
 
         hash_parts: list[str] = []
-        nodes = mat.node_tree.nodes
 
-        # NodeSocket.links iterates through all links in the node tree every time it is called, we don't want to do this
-        # for every input socket that is linked, so we'll store a mapping from input sockets to links.
-        input_socket_to_from_node_lookup: dict[NodeSocket, Union[Node, set[Node]]] = {}
-        for link in node_tree.links:
-            # Each linked input socket will usually only be linked to one node, since it's typically only geometry nodes
-            # that support sockets with multiple links.
-            to_socket = link.to_socket
-            if to_socket.link_limit == 1:
-                input_socket_to_from_node_lookup[to_socket] = link.from_node
-            else:
-                input_socket_to_from_node_lookup.setdefault(link.to_socket, set()).add(link.from_node)
-
-        # TODO: The iteration through nodes in this function needs a re-work because the order of the nodes in a node
-        #  tree is not well-defined and can change even when only changing which node is active. Iterating the entire
-        #  node tree also means disconnected nodes are included in the hash which is not ideal.
-        for node in nodes:
+        output_nodes, input_socket_to_from_node_lookup = _prepare_walk_node_tree(mat.node_tree)
+        for node in _walk_node_tree(output_nodes, input_socket_to_from_node_lookup):
             node_name = node.name
 
             # Skip certain known nodes
