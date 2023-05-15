@@ -114,11 +114,15 @@ def get_armature(armature_name=None):
     context = bpy.context
     if not armature_name:
         armature_name = context.scene.armature
-    for obj in context.view_layer.objects:
-        if obj.type == 'ARMATURE':
-            if obj.name == armature_name or Common.is_enum_empty(armature_name):
-                return obj
-    return None
+
+    if Common.is_enum_empty(armature_name):
+        return None
+
+    obj = context.view_layer.objects.get(armature_name)
+    if obj and obj.type == 'ARMATURE':
+        return obj
+    else:
+        return None
 
 
 def get_armature_objects():
