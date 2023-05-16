@@ -1,9 +1,13 @@
 # GPL License
 
 import bpy
+from bpy.types import (
+    Mesh,
+)
 import copy
 import math
 from mathutils import Matrix
+from itertools import chain
 
 from . import common as Common
 from . import translate as Translate
@@ -12,7 +16,6 @@ from .register import register_wrap
 from .translations import t
 
 # Only load mmd_tools if it's not on linux and 2.90 or higher since it causes Blender to crash
-from mmd_tools_local.operators import morph as Morph
 mmd_tools_installed = True
 
 
@@ -35,27 +38,16 @@ class FixArmature(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        # Todo: Remove this
-        # armature = Common.get_armature()
-        # Common.switch('EDIT')
-        #
-        # for bone in armature.data.edit_bones:
-        #     bone.tail = bone.head
-        #     bone.tail[2] += 0.1
-        #
-        # Common.switch('OBJECT')
-        #
-        #
-        # return {'FINISHED'}
-
         saved_data = Common.SavedData()
 
-        is_vrm = False
+        # Older vrm could import with the meshes not parented to the armature.
+        is_old_vrm = False
         if len(Common.get_meshes_objects()) == 0:
-            for mesh in Common.get_meshes_objects(mode=2):
+            for mesh in Common.get_meshes_objects(mode=Common.GET_MESHES_ALL):
                 if mesh.name.endswith(('.baked', '.baked0')):
-                    is_vrm = True  # TODO
-            if not is_vrm:
+                    is_old_vrm = True
+                    break
+            if not is_old_vrm:
                 Common.show_error(3.8, t('FixArmature.error.noMesh'))
                 return {'CANCELLED'}
 
@@ -63,6 +55,18 @@ class FixArmature(bpy.types.Operator):
 
         wm = bpy.context.window_manager
         armature = Common.set_default_stage()
+
+        is_vrm = False
+        vrm_addon_extension = getattr(armature.data, "vrm_addon_extension", None)
+        if vrm_addon_extension:
+            try:
+                human_bones = vrm_addon_extension.vrm0.humanoid.human_bones
+                if human_bones:
+                    # VRM models have a number of bones that are required to be set, so there should always be some
+                    # bones set if the model is a VRM model.
+                    is_vrm = any(human_bone.node.value for human_bone in human_bones)
+            except AttributeError:
+                is_vrm = False
 
         # Check if bone matrix == world matrix, important for xps models
         x_cord, y_cord, z_cord, fbx = Common.get_bone_orientations(armature)
@@ -148,7 +152,7 @@ class FixArmature(bpy.types.Operator):
                         wm.progress_update(current_step)
 
                         armature.parent.mmd_root.active_morph = index
-                        Morph.ViewBoneMorph.execute(None, context)
+                        bpy.ops.mmd_tools.view_bone_morph()
 
                         mesh = Common.get_meshes_objects()[0]
                         Common.set_active(mesh)
@@ -279,7 +283,7 @@ class FixArmature(bpy.types.Operator):
         Common.remove_unused_objects()
 
         # Fix VRM meshes being outside of the armature
-        if is_vrm:
+        if is_old_vrm:
             for mesh in Common.get_meshes_objects(mode=2):
                 if mesh.name.endswith(('.baked', '.baked0')):
                     mesh.parent = armature
@@ -344,78 +348,94 @@ class FixArmature(bpy.types.Operator):
         else:
             meshes = Common.get_meshes_objects()
 
-        for mesh in meshes:
-            Common.unselect_all()
-            Common.set_active(mesh)
+        fixed_uv_coords = 0
+        for mesh_obj in meshes:
+            mesh: Mesh = mesh_obj.data
 
-            # Unlock all mesh transforms
-            for i in range(0, 3):
-                mesh.lock_location[i] = False
-                mesh.lock_rotation[i] = False
-                mesh.lock_scale[i] = False
+            # Unlock all mesh_obj transforms
+            xyz_unlocked = (False, False, False)
+            mesh_obj.lock_location = xyz_unlocked
+            mesh_obj.lock_rotation = xyz_unlocked
+            mesh_obj.lock_rotation_w = False
+            mesh_obj.lock_rotations_4d = False
+            mesh_obj.lock_scale = xyz_unlocked
 
-            # Fix Source Shapekeys
-            if source_engine and Common.has_shapekeys(mesh):
-                mesh.data.shape_keys.key_blocks[0].name = "Basis"
+            if Common.has_shapekeys(mesh_obj):
+                # Fix Source Shapekeys.
+                if source_engine:
+                    # TODO: This should be unnecessary, the name of the reference key is irrelevant.
+                    mesh.shape_keys.key_blocks[0].name = "Basis"
 
-            # Fix VRM shapekeys
-            if is_vrm and Common.has_shapekeys(mesh):
-                shapekeys = mesh.data.shape_keys.key_blocks
-                for shapekey in shapekeys:
-                    shapekey.name = shapekey.name.replace('_', ' ').replace('Face.M F00 000 Fcl ', '').replace('Face.M F00 000 00 Fcl ', '')
+                # Remove unused empty shape keys.
+                Common.clean_shapekeys(mesh_obj)
 
-                # Sort shapekeys in categories
-                shapekey_order = []
-                for categorie in ['MTH', 'EYE', 'BRW', 'ALL', 'HA']:
+                # Fix VRM shapekeys
+                if is_old_vrm or is_vrm:
+                    # Clean up the names of VRM shapekeys and re-order them.
+                    # Sort shapekeys in categories
+                    categories = ['MTH', 'EYE', 'BRW', 'ALL', 'HA']
+                    category_lists = {category: [] for category in categories}
+                    shapekeys = mesh.shape_keys.key_blocks
                     for shapekey in shapekeys:
-                        if shapekey.name.startswith(categorie):
-                            shapekey_order.append(shapekey.name)
+                        shapekey_name = shapekey.name
+                        shapekey_name = (
+                            shapekey_name.replace('_', ' ')
+                            .replace('Face.M F00 000 Fcl ', '')
+                            .replace('Face.M F00 000 00 Fcl ', '')
+                        )
+                        shapekey.name = shapekey_name
+                        for category in categories:
+                            if shapekey_name.startswith(category):
+                                # It's possible that the shape key couldn't be renamed to the new name (e.g. it's
+                                # already in use), so we'll re-get the shape key name when adding it to the list.
+                                category_lists[category].append(shapekey.name)
+                                break
+                    # Iterator of shape key names in the desired order.
+                    shape_key_order_iter = chain.from_iterable(category_lists.values())
+                    # Reorders vrc shape keys to the correct order for Avatars 2.0, with the shape keys in
+                    # shape_key_order_gen following directly afterwards.
+                    Common.sort_shape_keys(mesh_obj.name, shape_key_order_iter)
+                else:
+                    # TODO: Not needed since Avatars 2.0, this should become an optional operation.
+                    # Reorders vrc shape keys to the correct order for Avatars 2.0.
+                    Common.sort_shape_keys(mesh_obj.name)
 
-                Common.sort_shape_keys(mesh.name, shapekey_order)
+                # Fix all shape key names of half jp chars
+                for shapekey in mesh.shape_keys.key_blocks:
+                    shapekey.name = Translate.fix_jp_chars(shapekey.name)
 
-
-            # Clean material names. Combining mats would do this too
-            Common.clean_material_names(mesh)
+            if not context.scene.combine_mats:
+                # Clean material names. Combining mats does this too
+                Common.clean_material_names(mesh_obj)
 
             # If all materials are transparent, make them visible. Also set transparency always to Z-Transparency
             if context.scene.fix_materials:
-                # Make materials exportable in Blender 2.80 and remove glossy mmd shader look
-                # Common.remove_toon_shader(mesh)
                 if mmd_tools_installed:
-                    Common.fix_mmd_shader(mesh)
-                Common.fix_vrm_shader(mesh)
-                Common.add_principled_shader(mesh)
-                for mat_slot in mesh.material_slots:  # Fix transparency per polygon and general garbage look in blender. Asthetic purposes to fix user complaints.
-                    mat_slot.material.shadow_method = "HASHED"
-                    mat_slot.material.blend_method = "HASHED"
-
-			# Remove empty shape keys and then save the shape key order
-            Common.clean_shapekeys(mesh)
-            Common.save_shapekey_order(mesh.name)
-
-            # Combines same materials
-            if context.scene.combine_mats:
-                bpy.ops.cats_material.combine_mats()
-
-
-            # Reorders vrc shape keys to the correct order
-            Common.sort_shape_keys(mesh.name)
-
-            # Fix all shape key names of half jp chars
-            if Common.has_shapekeys(mesh):
-                for shapekey in mesh.data.shape_keys.key_blocks:
-                    shapekey.name = Translate.fix_jp_chars(shapekey.name)
+                    Common.fix_mmd_shader(mesh_obj)
+                Common.fix_vrm_shader(mesh_obj)
+                # Fix transparency per polygon and general garbage look in blender.
+                # Asthetic purposes to fix user complaints.
+                for mat_slot in mesh_obj.material_slots:
+                    material = mat_slot.material
+                    if material:
+                        material.shadow_method = "HASHED"
+                        material.blend_method = "HASHED"
 
             # Fix faulty UV coordinates
-            fixed_uv_coords = 0
-            for uv in mesh.data.uv_layers:
-                for vert in range(len(uv.data) - 1):
-                    if math.isnan(uv.data[vert].uv.x):
-                        uv.data[vert].uv.x = 0
-                        fixed_uv_coords += 1
-                    if math.isnan(uv.data[vert].uv.y):
-                        uv.data[vert].uv.y = 0
-                        fixed_uv_coords += 1
+            fixed_uv_coords += Common.fix_non_finite_uv_coordinates(mesh)
+
+        # Combines same materials
+        # combine_mats runs on all meshes in Common.get_meshes_objects() and gathers material hashes of all the
+        # materials of those meshes before combining, so it must be run after we have fixed all the materials.
+        if context.scene.combine_mats:
+            bpy.ops.cats_material.combine_mats()
+
+        # Adding principled shader to materials must happen after same materials have been combined, otherwise
+        # mmd_shader materials that are considered duplicates will have their same diffuse and ambient colors baked to
+        # different images, making the materials no longer be considered duplicates.
+        if context.scene.fix_materials:
+            for mesh_obj in meshes:
+                Common.add_principled_shader(mesh_obj)
 
         # Translate bones and unhide them all
         to_translate = []

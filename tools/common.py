@@ -2384,3 +2384,38 @@ def wrap_dynamic_enum_items(items_func, property_name, sort=True, in_place=True)
         return _fix_out_of_bounds_enum_choices(self, context.scene, items, property_name, property_path)
 
     return wrapped_items_func
+
+
+def fix_non_finite_uv_coordinates(mesh: Mesh):
+    """Find all non-finite (NaN or +/- infinity) UV coordinates and replace them with 0.0.
+    Returns the number of UV coordinate components fixed."""
+    num_components_fixed = 0
+    uvs = np.empty(len(mesh.loops) * 2, dtype=np.single)
+    uvs_is_finite = np.empty_like(uvs, dtype=bool)
+    for uv_layer in mesh.uv_layers:
+        if bpy.app.version >= (3, 5):
+            # UV coordinates are in their own array, separate from pin/select as of 3.5. The old `data` access
+            # is slower compared to `uv` and is expected to be removed in Blender 4.0.
+            uv_layer_data = uv_layer.uv
+            uv_layer_attribute = "vector"
+        else:
+            uv_layer_data = uv_layer.data
+            uv_layer_attribute = "uv"
+        uv_layer_data.foreach_get(uv_layer_attribute, uvs)
+        # Get mask of all uvs components that are finite (not Nan and not +/- infinity) and store them in
+        # uvs_is_non_finite.
+        np.isfinite(uvs, out=uvs_is_finite)
+
+        if not uvs_is_finite.all():
+            # Invert uvs_is_non_finite so that it is now a mask of all uv components that are non-finite
+            # (NaN or +/- infinity)
+            uvs_is_non_finite = ~uvs_is_finite
+
+            # Count how many non-finite uv components there are
+            num_non_finite = np.count_nonzero(uvs_is_non_finite)
+            num_components_fixed += num_non_finite
+            # Fix the non-finite uv components by setting them to zero
+            uvs[uvs_is_non_finite] = 0
+            # Update the uvs with the fixed values
+            uv_layer_data.foreach_set(uv_layer_attribute, uvs)
+    return num_components_fixed
