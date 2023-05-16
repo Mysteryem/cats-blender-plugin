@@ -63,6 +63,18 @@ VRM_UNLINK_OUTPUTS_NODE_ID_NAMES = {
 VRM_NODES_TO_KEEP."""
 
 
+# Constants used by get_meshes_objects
+GET_MESHES_WITH_ARMATURES = 0
+"""Only mesh objects whose `.parent` or `.parent.parent` is the armature object has the same name as the armature_name
+argument or, when the argument is None, the name of the armature object returned by get_armature()."""
+GET_MESHES_TOP_LEVEL = 1
+"""Only mesh objects whose `.parent` is None."""
+GET_MESHES_ALL = 2
+"""All mesh objects in the current view layer."""
+GET_MESHES_SELECTED = 3
+"""All mesh objects that are selected in the current view layer."""
+
+
 class SavedData:
     __object_properties = {}
     __active_object = None
@@ -621,12 +633,8 @@ def fix_armature_names(armature_name=None):
         pass
 
 
-def get_meshes_objects(armature_name=None, mode=0, check=True, visible_only=False):
-    # Modes:
-    # 0 = With armatures only
-    # 1 = Top level only
-    # 2 = All meshes
-    # 3 = Selected only
+# TODO: Remove the check argument and the function calls that use it.
+def get_meshes_objects(armature_name=None, mode=GET_MESHES_WITH_ARMATURES, check=True, visible_only=False):
     context = bpy.context
 
     if not armature_name:
@@ -634,54 +642,37 @@ def get_meshes_objects(armature_name=None, mode=0, check=True, visible_only=Fals
         if armature:
             armature_name = armature.name
 
-    meshes = []
-    for ob in context.view_layer.objects:
-        if ob.type == 'MESH':
-            if mode == 0 or mode == 5:
-                if ob.parent:
-                    if ob.parent.type == 'ARMATURE' and ob.parent.name == armature_name:
+    objects = context.view_layer.objects
+
+    # This function gets called a lot, so some code is repeated here for slightly better performance.
+    if mode == GET_MESHES_WITH_ARMATURES:
+        meshes = []
+        if armature_name:
+            for ob in objects:
+                if ob.type != 'MESH':
+                    continue
+
+                parent = ob.parent
+                if parent:
+                    if parent.type == 'ARMATURE' and parent.name == armature_name:
                         meshes.append(ob)
-                    elif ob.parent.parent and ob.parent.parent.type == 'ARMATURE' and ob.parent.parent.name == armature_name:
+                    elif (
+                            (grandparent := parent.parent)
+                            and grandparent.type == 'ARMATURE'
+                            and grandparent.name == armature_name
+                    ):
                         meshes.append(ob)
-
-            elif mode == 1:
-                if not ob.parent:
-                    meshes.append(ob)
-
-            elif mode == 2:
-                meshes.append(ob)
-
-            elif mode == 3:
-                if ob.select_get():
-                    meshes.append(ob)
+    elif mode == GET_MESHES_TOP_LEVEL:
+        meshes = [ob for ob in objects if ob.type == 'MESH' and not ob.parent]
+    elif mode == GET_MESHES_ALL:
+        meshes = [ob for ob in objects if ob.type == 'MESH']
+    elif mode == GET_MESHES_SELECTED:
+        meshes = [ob for ob in objects if ob.type == 'MESH' and ob.select_get()]
+    else:
+        raise ValueError(f"Invalid mode '{mode}'")
 
     if visible_only:
-        for mesh in meshes:
-            if is_hidden(mesh):
-                meshes.remove(mesh)
-
-    # Check for broken meshes and delete them
-    if check:
-        current_active = context.view_layer.objects.active
-        to_remove = []
-        for mesh in meshes:
-            selected = mesh.select_get()
-            # print(mesh.name, mesh.users)
-            set_active(mesh)
-
-            if not context.view_layer.objects.active:
-                to_remove.append(mesh)
-
-            if not selected:
-                select(mesh, False)
-
-        for mesh in to_remove:
-            print('DELETED CORRUPTED MESH:', mesh.name, mesh.users)
-            meshes.remove(mesh)
-            delete(mesh)
-
-        if current_active:
-            set_active(current_active)
+        meshes = [ob for ob in meshes if ob.visible_get()]
 
     return meshes
 
