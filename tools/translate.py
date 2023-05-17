@@ -10,6 +10,8 @@ import traceback
 import requests.exceptions
 
 from datetime import datetime, timezone
+from functools import partial
+from typing import Callable
 
 from . import common as Common
 from .register import register_wrap
@@ -521,11 +523,24 @@ def translate(to_translate, add_space=False, translating_shapes=False):
     return to_translate, pre_translation != to_translate
 
 
-def fix_jp_chars(name):
-    for values in mmd_translations.jp_half_to_full_tuples:
-        if values[0] in name:
-            name = name.replace(values[0], values[1])
-    return name
+def _make_fix_jp_chars() -> Callable[[str], str]:
+    # mmd_translations.jp_half_to_full_tuples is a tuple of tuple-pairs, but we need a dict for fast lookup of the
+    # replacements for matches.
+    half_to_full_dict = dict(mmd_translations.jp_half_to_full_tuples)
+
+    # Compile regex that simply matches every key in the dict
+    pattern = re.compile("|".join(re.escape(key) for key in half_to_full_dict))
+
+    def callback(match_):
+        """Get the first match and look up and return its replacement."""
+        return half_to_full_dict[match_[0]]
+
+    # Return a partial function of pattern.sub with callback bound to the first argument.
+    return partial(pattern.sub, callback)
+
+
+fix_jp_chars = _make_fix_jp_chars()
+"""Convert half-width character strings in the input string to their equivalent full-width characters"""
 
 
 def reset_google_dict():
