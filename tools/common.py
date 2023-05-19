@@ -1,6 +1,7 @@
 # GPL License
 
 import re
+import bmesh
 import bpy
 import time
 import numpy as np
@@ -1636,39 +1637,62 @@ class ShowError(bpy.types.Operator):
                     row.label(text=line, icon_value=Supporter.preview_collections["custom_icons"]["empty"].icon_id)
 
 
-def remove_doubles(mesh, threshold, save_shapes=True):
-    if not mesh:
+def remove_doubles(mesh_obj: Object, threshold: float, save_shapes: bool = True) -> int:
+    # TODO: Remove this, the caller should do the check.
+    if not mesh_obj:
         return 0
 
-    # If the mesh has no shapekeys, don't remove doubles
-    if not has_shapekeys(mesh) or len(mesh.data.shape_keys.key_blocks) == 1:
+    mesh: Mesh = mesh_obj.data
+
+    # FIXME: Make this optional so the Cats Remove Doubles Operator actually works on meshes without shape keys.
+    if not has_shapekeys(mesh_obj) or len(mesh.shape_keys.key_blocks) == 1:
         return 0
 
-    pre_tris = len(mesh.data.polygons)
+    pre_polygons = len(mesh.polygons)
 
-    set_active(mesh)
-    switch('EDIT')
-    bpy.ops.mesh.select_mode(type="VERT")
-    bpy.ops.mesh.select_all(action='DESELECT')
+    if save_shapes:
+        # Select all vertices of the mesh that are not moved by shape keys.
+        vertex_selection = np.full(len(mesh.vertices), True, dtype=bool)
+        cached_co_getter = cache(_get_shape_key_co)
+        for kb in mesh.shape_keys.key_blocks[1:]:
+            relative_key = kb.relative_key
+            if kb == relative_key:
+                continue
+            same = cached_co_getter(kb) == cached_co_getter(relative_key)
+            vertex_not_moved_by_shape_key = np.all(same.reshape(-1, 3), axis=1)
+            vertex_selection &= vertex_not_moved_by_shape_key
+        # Early del to allow freeing up memory. This might help speed up huge meshes on systems with low RAM.
+        del cached_co_getter
 
-    if save_shapes and has_shapekeys(mesh):
-        switch('OBJECT')
-        for kb in mesh.data.shape_keys.key_blocks:
-            i = 0
-            for v0, v1 in zip(kb.relative_key.data, kb.data):
-                if v0.co != v1.co:
-                    mesh.data.vertices[i].select = True
-                i += 1
-        switch('EDIT')
-        bpy.ops.mesh.select_all(action='INVERT')
+        if not vertex_selection.any():
+            # No vertices would be selected, so we can skip doing remove_doubles
+            return 0
+
+        if vertex_selection.all():
+            # No vertices are moved by shapes, so we'll act like we're not saving shapes
+            save_shapes = False
+        else:
+            # Update selection so it can be read from the bmesh
+            mesh.vertices.foreach_set("select", vertex_selection)
+
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    if save_shapes:
+        verts = [v for v in bm.verts if v.select]
     else:
-        bpy.ops.mesh.select_all(action='SELECT')
+        verts = bm.verts
 
-    bpy.ops.mesh.remove_doubles(threshold=threshold)
-    bpy.ops.mesh.select_all(action='DESELECT')
-    switch('OBJECT')
+    bmesh.ops.remove_doubles(bm, verts=verts, dist=threshold)
 
-    return pre_tris - len(mesh.data.polygons)
+    # Update selection
+    # This avoids cases where the user could only have face selection mode enabled, but because of the use of bmesh,
+    # some edges or vertices could be selected even though those selection modes are disabled.
+    bm.select_flush(True)
+
+    # Update the mesh
+    bm.to_mesh(mesh)
+
+    return pre_polygons - len(mesh.polygons)
 
 
 def get_tricount(obj: Object):
