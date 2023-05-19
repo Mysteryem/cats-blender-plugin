@@ -3,7 +3,6 @@
 import re
 import bpy
 import time
-import bmesh
 import numpy as np
 
 from bpy.types import (
@@ -1672,13 +1671,24 @@ def remove_doubles(mesh, threshold, save_shapes=True):
     return pre_tris - len(mesh.data.polygons)
 
 
-def get_tricount(obj):
-    # Triangulates with Bmesh to avoid messing with the original geometry
-    bmesh_mesh = bmesh.new()
-    bmesh_mesh.from_mesh(obj.data)
+def get_tricount(obj: Object):
+    # This is typically a few times faster than calling mesh.calc_loop_triangles() and then returning
+    # len(mesh.loop_triangles) when mesh.loop_triangles have not yet been calculated.
+    me: Mesh = obj.data
 
-    bmesh.ops.triangulate(bmesh_mesh, faces=bmesh_mesh.faces[:])
-    return len(bmesh_mesh.faces)
+    # The dtype will likely change to np.intc in Blender 4.0, or whenever polygon loop_total/loop_start are moved to
+    # attributes, since attributes are signed.
+    # If loop_total actually gets removed in Blender 4.0, the polygons sides can be calculated from the element-wise
+    # difference of loop_starts appended by the number of loops:
+    # loop_starts = np.empty(len(me.polygons), dtype=np.uintc)
+    # me.polygons.foreach_get("loop_start", loop_starts)
+    # polygon_sides = np.diff(loop_starts, append=len(loop_starts))
+
+    # Loop total of a polygon gets the number of sides.
+    polygon_sides = np.empty(len(me.polygons), dtype=np.uintc)
+    me.polygons.foreach_get("loop_total", polygon_sides)
+    # The number of sides of a polygon minus 2 is the minimum number of triangles to make that polygon.
+    return np.sum(polygon_sides - 2)
 
 
 def get_bone_orientations(armature):
