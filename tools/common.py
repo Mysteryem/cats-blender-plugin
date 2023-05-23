@@ -23,7 +23,8 @@ from datetime import datetime
 from html.parser import HTMLParser
 from html.entities import name2codepoint
 from functools import partial, cache
-from typing import Callable
+from typing import Callable, Any, Union
+from contextlib import contextmanager
 
 from . import common as Common
 from . import supporter as Supporter
@@ -2453,3 +2454,59 @@ def fix_non_finite_uv_coordinates(mesh: Mesh):
             # Update the uvs with the fixed values
             uv_layer_data.foreach_set(uv_layer_attribute, uvs)
     return num_components_fixed
+
+
+if bpy.app.version >= (3, 2):
+    @contextmanager
+    def temp_context_override(context: Context, **context_override) -> Union[tuple[()], tuple[dict[str, Any]]]:
+        """Hack to support context overrides across Blender versions.
+
+        The yielded value should be unpacked as the first argument to all operator calls within this context manager.
+
+        For example, if the yielded value is stored in the variable `override`:
+          `bpy.ops.mesh.reveal(*override, select=False)`
+        On Blender 3.2 and newer, `override` is an empty tuple, so unpacking it will give
+          `bpy.ops.mesh.reveal(select=False)`
+        """
+        with context.temp_override(**context_override):
+            try:
+                yield ()
+            finally:
+                pass
+else:
+    @contextmanager
+    def temp_context_override(context: Context, **context_override) -> Union[tuple[()], tuple[dict[str, Any]]]:
+        """Hack to support context overrides across Blender versions.
+
+        The yielded value should be unpacked as the first argument to all operator calls within this context manager.
+
+        For example, if the yielded value is stored in the variable `override`:
+          `bpy.ops.mesh.reveal(*override, select=False)`
+        On Blender 3.1 and older, `override` is a tuple containing only `context_override`, so unpacking it will give
+          `bpy.ops.mesh.reveal(context_override, select=False)`
+        """
+        try:
+            yield context_override,
+        finally:
+            pass
+
+
+# Extension to temp_context_override to support nesting. Not currently needed, so commented out.
+# if bpy.app.version >= (3, 2):
+#     def nest_context_override(existing_override_yield: tuple[()], **new_override):
+#         """Hack to allow nesting context overrides across Blender versions.
+#
+#         The first argument should be the override variable yielded by the `temp_context_override` context manager.
+#
+#         Returns the value to pass as the `**context_override` to the nested `temp_context_override` call.
+#         """
+#         return new_override
+# else:
+#     def nest_context_override(existing_override_yield: tuple[dict[str, Any]], **new_override):
+#         """Hack to allow nesting context overrides across Blender versions.
+#
+#         The first argument should be the override variable yielded by the `temp_context_override` context manager.
+#
+#         Returns the value to pass as the `**context_override` to the nested `temp_context_override` call.
+#         """
+#         return existing_override_yield[0] | new_override

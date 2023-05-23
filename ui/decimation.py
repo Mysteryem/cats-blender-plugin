@@ -55,20 +55,22 @@ class DecimationPanel(ToolPanel, bpy.types.Panel):
         box = layout.box()
         col = box.column(align=True)
 
+        scene = context.scene
+
         row = col.row(align=True)
         row.label(text=t('DecimationPanel.decimationMode'))
         row = col.row(align=True)
-        row.prop(context.scene, 'decimation_mode', expand=True)
+        row.prop(scene, 'decimation_mode', expand=True)
         row = col.row(align=True)
         row.scale_y = 0.7
-        if context.scene.decimation_mode == 'SAFE':
+        decimation_mode = scene.decimation_mode
+        if decimation_mode == 'SAFE':
             row.label(text=t('DecimationPanel.safeModeDesc'))
-        elif context.scene.decimation_mode == 'HALF':
+        elif decimation_mode == 'HALF':
             row.label(text=t('DecimationPanel.halfModeDesc'))
-        elif context.scene.decimation_mode == 'FULL':
+        elif decimation_mode == 'FULL':
             row.label(text=t('DecimationPanel.fullModeDesc'))
-
-        elif context.scene.decimation_mode == 'CUSTOM':
+        elif decimation_mode == 'CUSTOM':
             col.separator()
 
             if len(Common.get_meshes_objects(check=False)) <= 1:
@@ -90,13 +92,14 @@ class DecimationPanel(ToolPanel, bpy.types.Panel):
             row = col.row(align=True)
             row.label(text=t('DecimationPanel.customWhitelist'))
             row = col.row(align=True)
-            row.prop(context.scene, 'selection_mode', expand=True)
+            row.prop(scene, 'selection_mode', expand=True)
             col.separator()
             col.separator()
 
-            if context.scene.selection_mode == 'SHAPES':
+            selection_mode = scene.selection_mode
+            if selection_mode == 'SHAPES':
                 row = layout_split(col, factor=0.7, align=False)
-                row.prop(context.scene, 'add_shape_key', icon='SHAPEKEY_DATA')
+                row.prop(scene, 'add_shape_key', icon='SHAPEKEY_DATA')
                 row.operator(Decimation.AddShapeButton.bl_idname, icon=globs.ICON_ADD)
                 col.separator()
 
@@ -111,14 +114,14 @@ class DecimationPanel(ToolPanel, bpy.types.Panel):
                     row.label(text=shape, icon='SHAPEKEY_DATA')
                     op = row.operator(Decimation.RemoveShapeButton.bl_idname, text='', icon=globs.ICON_REMOVE)
                     op.shape_name = shape
-            elif context.scene.selection_mode == 'MESHES':
+            elif selection_mode == 'MESHES':
                 row = layout_split(col, factor=0.7, align=False)
-                row.prop(context.scene, 'add_mesh', icon='MESH_DATA')
+                row.prop(scene, 'add_mesh', icon='MESH_DATA')
                 row.operator(Decimation.AddMeshButton.bl_idname, icon=globs.ICON_ADD)
                 col.separator()
 
-                if Common.is_enum_empty(context.scene.add_mesh):
-                    row = col.row(align=True)
+                if Common.is_enum_empty(scene.add_mesh):
+                    col.row(align=True)
                     col.label(text=t('DecimationPanel.warn.noDecimation'), icon='ERROR')
 
                 box2 = col.box()
@@ -137,26 +140,26 @@ class DecimationPanel(ToolPanel, bpy.types.Panel):
 
             if len(Decimation.ignore_shapes) == 0 and len(Decimation.ignore_meshes) == 0:
                 col.label(text=t('DecimationPanel.warn.emptyList'), icon='ERROR')
-                row = col.row(align=True)
+                col.row(align=True)
             else:
                 col.label(text=t('DecimationPanel.warn.correctWhitelist'), icon='INFO')
-                row = col.row(align=True)
+                col.row(align=True)
 
         col.separator()
         col.separator()
         row = col.row(align=True)
-        row.prop(context.scene, 'decimate_fingers')
-        row = col.row(align=True)
-        row.prop(context.scene, 'decimation_remove_doubles')
-        row = col.row(align=True)
-        row.prop(context.scene, 'decimation_retain_separated_meshes', expand=True)
+        row.prop(scene, 'decimate_fingers')
         row = col.row(align=True)
         row.operator(Decimation.AutoDecimatePresetGood.bl_idname)
         row.operator(Decimation.AutoDecimatePresetExcellent.bl_idname)
         row.operator(Decimation.AutoDecimatePresetQuest.bl_idname)
         row = col.row(align=True)
-        row.prop(context.scene, 'max_tris')
+        row.prop(scene, 'max_tris')
         col.separator()
         row = col.row(align=True)
         row.scale_y = 1.2
-        row.operator(Decimation.AutoDecimateButton.bl_idname, icon='MOD_DECIM')
+        decimate_properties = row.operator(Decimation.AutoDecimateButton.bl_idname, icon='MOD_DECIM')
+        decimate_properties.armature_name = scene.armature
+        decimate_properties.decimation_mode = decimation_mode
+        decimate_properties.save_fingers = scene.decimate_fingers
+        decimate_properties.max_tris = scene.max_tris

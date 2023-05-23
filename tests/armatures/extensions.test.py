@@ -16,7 +16,6 @@ class TestAddon(unittest.TestCase):
         bpy.context.scene.show_mmd_tabs = True
         bpy.context.scene.disable_eye_blinking = True
         bpy.context.scene.disable_eye_movement = True
-        bpy.context.scene.decimation_remove_doubles = True
         bpy.context.scene.decimate_hands = True
         bpy.context.scene.decimate_fingers = True
         bpy.context.scene.merge_armatures_cleanup_shape_keys = True
@@ -45,7 +44,6 @@ class TestAddon(unittest.TestCase):
         bpy.context.scene.show_mmd_tabs = False
         bpy.context.scene.disable_eye_blinking = False
         bpy.context.scene.disable_eye_movement = False
-        bpy.context.scene.decimation_remove_doubles = False
         bpy.context.scene.decimate_hands = False
         bpy.context.scene.decimate_fingers = False
         bpy.context.scene.merge_armatures_cleanup_shape_keys = False

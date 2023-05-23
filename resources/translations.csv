@@ -466,6 +466,11 @@ AutoDecimateButton.label,Quick Decimation,,버텍스 줄이기(Decimation)
 AutoDecimateButton.desc,"This will automatically decimate your model while preserving the shape keys.
 You should manually remove unimportant meshes first.",,
 AutoDecimateButton.error.noMesh,No meshes found!,,메쉬가 발견되지 않음!
+AutoDecimateButton.error.noArmature,Armature not found!,,
+AutoDecimateButton.armature_name.name,Armature,アーマチュア,뼈대(Armature)
+AutoDecimateButton.armature_name.desc,The armature to decimate,,
+AutoDecimateButton.triangulate.name,Triangulate,,
+AutoDecimateButton.triangulate.desc,Triangulate the decimated meshes,,
 decimate.cantDecimateWithSettings,This model can not be decimated to {number} tris with the specified settings.,,
 decimate.safeTryOptions,"Try to use Custom, Half or Full Decimation.",,
 decimate.halfTryOptions,Try to use Custom or Full Decimation.,,
@@ -918,10 +923,6 @@ IndexFinger(1-3)_(L/R)
 MiddleFinger(1-3)_(L/R)
 RingFinger(1-3)_(L/R)
 LittleFinger(1-3)_(L/R)"
-Scene.decimation_remove_doubles.label,Remove Doubles,重複を削除,이중 제거
-Scene.decimation_remove_doubles.desc,Uncheck this if you get issues with this checked,Uncheck this if you got issues with with this checked,문제가 될 시 체크를 해제하세요
-Scene.decimation_retain_separated_meshes.label,Retain Separated Meshes,,
-Scene.decimation_retain_separated_meshes.desc,Experimental option. Keep existing meshes as separate objects throughout decimation,,
 Scene.max_tris.label,Tris,トリス,삼각폴리곤(Tris)
 Scene.max_tris.desc,The target amount of tris after decimation,,
 Scene.eye_mode.label,Eye Mode,アイモード,

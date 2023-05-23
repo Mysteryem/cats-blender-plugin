@@ -221,18 +221,6 @@ def register():
         description=t('Scene.decimate_hands.desc')
     )
 
-    Scene.decimation_remove_doubles = BoolProperty(
-        name=t('Scene.decimation_remove_doubles.label'),
-        description=t('Scene.decimation_remove_doubles.desc'),
-        default=True
-    )
-
-    Scene.decimation_retain_separated_meshes = BoolProperty(
-        name=t('Scene.decimation_retain_separated_meshes.label'),
-        description=t('Scene.decimation_retain_separated_meshes.desc'),
-        default=False
-    )
-
     Scene.max_tris = IntProperty(
         name=t('Scene.max_tris.label'),
         description=t('Scene.max_tris.desc'),
