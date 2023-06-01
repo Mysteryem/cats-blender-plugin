@@ -1001,71 +1001,88 @@ class FixArmature(bpy.types.Operator):
                     Common.mix_weights(mesh, bone_child.name, bone_parent.name)
 
             # Merge weights
+            scene = context.scene
+            keep_twist_bones = scene.keep_twist_bones
+            fix_twist_bones = scene.fix_twist_bones
+            armature_bones = armature.data.bones
+            # Get a mapping from lower-case vertex group names to the actual vertex group names in advance so that we
+            # don't have to loop through the vertex groups to find a lower-case match within the main loop.
+            vg_to_lower_name_to_vg_name = {}
+            for vg in mesh.vertex_groups:
+                vg_name = vg.name
+                # In the odd case that there exist multiple vertex groups that have the same lower-case name, we will
+                # only use the first one found.
+                if vg_name not in vg_to_lower_name_to_vg_name:
+                    vg_to_lower_name_to_vg_name[vg_name.lower()] = vg_name
+            twist_bone_names = {"handtwist_l", "handtwist_r", "armtwist_l", "armtwist_r"}
             for bone_new, bones_old in temp_reweight_bones.items():
-                if "\\L" in bone_new:
-                    bones = [[bone_new.replace("\\Left", "Left").replace("\\L", "L"), ""],
-                             [bone_new.replace("\\Left", "Right").replace("\\L", "R"), ""]]
+                bone_new_has_replacement_pattern = "\\L" in bone_new
+                if bone_new_has_replacement_pattern:
+                    bone_new_l = bone_new.replace("\\Left", "Left").replace("\\L", "L")
+                    bone_new_r = bone_new.replace("\\Left", "Right").replace("\\L", "R")
+                    new_bones = (bone_new_l, bone_new_r)
                 else:
-                    bones = [[bone_new, ""]]
+                    new_bones = (bone_new,)
                 for bone_old in bones_old:
-                    if "\\L" in bone_new:
-                        bones[0][1] = bone_old.replace("\\Left", "Left").replace("\\L", "L")
-                        bones[1][1] = bone_old.replace("\\Left", "Right").replace("\\L", "R")
+                    if bone_new_has_replacement_pattern:
+                        bone_old_l = bone_old.replace("\\Left", "Left").replace("\\L", "L")
+                        bone_old_r = bone_old.replace("\\Left", "Right").replace("\\L", "R")
+                        old_bones = (bone_old_l, bone_old_r)
                     else:
-                        bones[0][1] = bone_old
+                        old_bones = (bone_old,)
 
-                    for bone in bones:  # bone[0] = new name, bone[1] = old name
+                    for new_bone, old_bone in zip(new_bones, old_bones):
                         current_step += 1
                         wm.progress_update(current_step)
 
-                        # Seach for vertex group
-                        vg = None
-                        for vg_tmp in mesh.vertex_groups:
-                            if vg_tmp.name.lower() == bone[1].lower():
-                                vg = vg_tmp
-                                break
+                        old_bone_lower = old_bone.lower()
+                        old_bone_vg_name = vg_to_lower_name_to_vg_name.get(old_bone_lower)
 
                         # Cancel if vertex group was not found
-                        if not vg:
+                        if not old_bone_vg_name:
                             # Add bone to delete list
-                            if bone[1] not in bones_to_delete:
-                                bones_to_delete.append(bone[1])
+                            # todo: Replace bones_to_delete with a set
+                            if old_bone not in bones_to_delete:
+                                bones_to_delete.append(old_bone)
                             continue
 
-                        if bone[0] == vg.name:
-                            print('BUG: ' + bone[0] + ' tried to mix weights with itself!')
+                        if new_bone == old_bone_vg_name:
+                            print(f"BUG: {new_bone} tried to mix weights with itself!")
                             continue
 
-                        if context.scene.keep_twist_bones and 'twist' in bone[1].lower():
+                        if keep_twist_bones and "twist" in old_bone_lower:
                             continue
-                        if context.scene.fix_twist_bones and bone[1].lower() in ['handtwist_l', 'handtwist_r', 'armtwist_l', 'armtwist_r']:
-                            print('TWIST FOUND!')
+                        if fix_twist_bones and old_bone_lower in twist_bone_names:
+                            print("TWIST FOUND!")
                             continue
-
-                        # print(bone[1] + " to1 " + bone[0])
 
                         # If important vertex group is not there create it
-                        if mesh.vertex_groups.get(bone[0]) is None:
-                            if bone[0] in Bones.dont_delete_these_bones and bone[0] in armature.data.bones:
-                                bpy.ops.object.vertex_group_add()
-                                mesh.vertex_groups.active.name = bone[0]
-                                if mesh.vertex_groups.get(bone[0]) is None:
-                                    continue
-                            else:
+                        if new_bone not in vg_to_lower_name_to_vg_name:
+                            if new_bone not in Bones.dont_delete_these_bones or new_bone not in armature_bones:
                                 continue
+                            new_bone_vg = mesh.vertex_groups.new(name=new_bone)
+                            new_bone_vg_name = new_bone_vg.name
+                            # It's probably not necessary to add the new vertex group, but to match old behaviour we
+                            # will add it for now.
+                            vg_to_lower_name_to_vg_name[new_bone_vg_name.lower()] = new_bone_vg_name
+                            # We already checked that no vertex group with the name `new_bone` exists, so the created
+                            # vertex group should have the name `new_bone`.
+                            assert new_bone_vg_name == new_bone
 
-                        bone_tmp = armature.data.bones.get(vg.name)
+                        bone_tmp = armature_bones.get(old_bone_vg_name)
                         if bone_tmp:
                             for child in bone_tmp.children:
-                                if not temp_list_reparent_bones.get(child.name):
-                                    temp_list_reparent_bones[child.name] = bone[0]
+                                child_name = child.name
+                                if child_name not in temp_list_reparent_bones:
+                                    temp_list_reparent_bones[child_name] = new_bone
 
                         # Add bone to delete list
-                        if vg.name not in bones_to_delete:
-                            bones_to_delete.append(vg.name)
+                        if old_bone_vg_name not in bones_to_delete:
+                            bones_to_delete.append(old_bone_vg_name)
 
                         # Mix and delete group
-                        Common.mix_weights(mesh, vg.name, bone[0])
+                        Common.mix_weights(mesh, old_bone_vg_name, new_bone)
+                        del vg_to_lower_name_to_vg_name[old_bone_lower]
 
             # Old mixing weights. Still important
             for key, value in temp_list_reweight_bones.items():
