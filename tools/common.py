@@ -1780,9 +1780,29 @@ def fix_zero_length_bones(armature: Object):
     if armature.mode != 'EDIT':
         return
 
-    for bone in armature.data.edit_bones:
-        if all(round(h, 4) == round(t, 4) for h, t in zip(bone.head, bone.tail)):
-            bone.tail.z += 0.1
+    armature_data: bpy.types.Armature = armature.data
+    edit_bones = armature_data.edit_bones
+    num_bones = len(edit_bones)
+    heads = np.empty(num_bones * 3, dtype=np.single)
+    tails = np.empty(num_bones * 3, dtype=np.single)
+    edit_bones.foreach_get("head", heads)
+    edit_bones.foreach_get("tail", tails)
+    subtracted = (heads-tails).reshape(-1, 3)
+    # Same as (subtracted ** 2).sum(axis=1), but faster.
+    squared_distances = np.einsum("ij,ij->i", subtracted, subtracted)
+    # Blender uses 1e-12 (technically it squares 1e-6), but we'll use 7.5e-9 to match old Cats behaviour of a bone being
+    # considered too small if all the xyz components of its head rounded to 4 decimal places are the same as all the xyz
+    # components of its tail rounded to 4 decimal places.
+    # `Vector((0.00005,0.00005,0.00005)).distance_squared` would be 7.5e-9 if there wasn't a small amount of precision
+    # error.
+    # Bones that are smaller than this are difficult to see/select, so making the bones larger should help users too.
+    too_close = squared_distances <= 7.5e-9
+    if np.any(too_close):
+        # Add a small amount to the z component of each bone tail, this will make the bone point upwards and be easily
+        # longer than the minimum length.
+        tails[2::3][too_close] += 0.1
+        # Set the updated tail values.
+        edit_bones.foreach_set("tail", tails)
 
 
 def fix_bone_orientations(armature):
