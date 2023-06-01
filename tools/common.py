@@ -1773,15 +1773,16 @@ def ui_refresh():
 
 
 def fix_zero_length_bones(armature: Object):
-    pre_mode = armature.mode
-    set_active(armature)
-    switch('EDIT')
+    # Adjusting bones only occurs in EDIT mode, if the current mode is not EDIT mode then it is exceedingly likely that
+    # bones with close-to-zero length would already have been removed. Scaling an armature Object to be tiny and the
+    # applying the transforms of the armature Object can create bones that are too small, but this should be too
+    # unlikely to care about.
+    if armature.mode != 'EDIT':
+        return
 
     for bone in armature.data.edit_bones:
         if all(round(h, 4) == round(t, 4) for h, t in zip(bone.head, bone.tail)):
             bone.tail.z += 0.1
-
-    switch(pre_mode)
 
 
 def fix_bone_orientations(armature):
