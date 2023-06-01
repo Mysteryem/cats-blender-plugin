@@ -92,12 +92,12 @@ class FixArmature(bpy.types.Operator):
         # Count objects for loading bar
         steps = 0
         for key, value in Bones.bone_rename.items():
-            if '\Left' in key or '\L' in key:
+            if "\\L" in key:
                 steps += 2 * len(value)
             else:
                 steps += len(value)
         for key, value in temp_reweight_bones.items():
-            if '\Left' in key or '\L' in key:
+            if "\\L" in key:
                 steps += 2 * len(value)
             else:
                 steps += len(value)
@@ -632,15 +632,15 @@ class FixArmature(bpy.types.Operator):
         spines = []
         spine_parts = []
         for bone_new, bones_old in Bones.bone_rename.items():
-            if '\Left' in bone_new or '\L' in bone_new:
-                bones = [[bone_new.replace('\Left', 'Left').replace('\L', 'L'), ''],
-                         [bone_new.replace('\Left', 'Right').replace('\L', 'R'), '']]
+            if "\\L" in bone_new:
+                bones = [[bone_new.replace("\\Left", "Left").replace("\\L", "L"), ""],
+                         [bone_new.replace("\\Left", "Right").replace("\\L", "R"), ""]]
             else:
-                bones = [[bone_new, '']]
+                bones = [[bone_new, ""]]
             for bone_old in bones_old:
-                if '\Left' in bone_new or '\L' in bone_new:
-                    bones[0][1] = bone_old.replace('\Left', 'Left').replace('\L', 'L')
-                    bones[1][1] = bone_old.replace('\Left', 'Right').replace('\L', 'R')
+                if "\\L" in bone_new:
+                    bones[0][1] = bone_old.replace("\\Left", "Left").replace("\\L", "L")
+                    bones[1][1] = bone_old.replace("\\Left", "Right").replace("\\L", "R")
                 else:
                     bones[0][1] = bone_old
 
@@ -941,9 +941,9 @@ class FixArmature(bpy.types.Operator):
 
             # Add bones to parent reweight list
             for name in Bones.bone_reweight_to_parent:
-                if '\Left' in name or '\L' in name:
-                    bones = [name.replace('\Left', 'Left').replace('\L', 'L'),
-                             name.replace('\Left', 'Right').replace('\L', 'R')]
+                if "\\L" in name:
+                    bones = [name.replace("\\Left", "Left").replace("\\L", "L"),
+                             name.replace("\\Left", "Right").replace("\\L", "R")]
                 else:
                     bones = [name]
 
@@ -969,8 +969,8 @@ class FixArmature(bpy.types.Operator):
                     while parent_in_list:
                         parent_in_list = False
                         for name_tmp in Bones.bone_reweight_to_parent:
-                            if bone_parent.name == name_tmp.replace('\Left', 'Left').replace('\L', 'L') \
-                                    or bone_parent.name == name_tmp.replace('\Left', 'Right').replace('\L', 'R'):
+                            if bone_parent.name == name_tmp.replace("\\Left", "Left").replace("\\L", "L") \
+                                    or bone_parent.name == name_tmp.replace("\\Left", "Right").replace("\\L", "R"):
                                 bone_parent = bone_parent.parent
                                 parent_in_list = True
                                 break
@@ -1002,15 +1002,15 @@ class FixArmature(bpy.types.Operator):
 
             # Merge weights
             for bone_new, bones_old in temp_reweight_bones.items():
-                if '\Left' in bone_new or '\L' in bone_new:
-                    bones = [[bone_new.replace('\Left', 'Left').replace('\L', 'L'), ''],
-                             [bone_new.replace('\Left', 'Right').replace('\L', 'R'), '']]
+                if "\\L" in bone_new:
+                    bones = [[bone_new.replace("\\Left", "Left").replace("\\L", "L"), ""],
+                             [bone_new.replace("\\Left", "Right").replace("\\L", "R"), ""]]
                 else:
-                    bones = [[bone_new, '']]
+                    bones = [[bone_new, ""]]
                 for bone_old in bones_old:
-                    if '\Left' in bone_new or '\L' in bone_new:
-                        bones[0][1] = bone_old.replace('\Left', 'Left').replace('\L', 'L')
-                        bones[1][1] = bone_old.replace('\Left', 'Right').replace('\L', 'R')
+                    if "\\L" in bone_new:
+                        bones[0][1] = bone_old.replace("\\Left", "Left").replace("\\L", "L")
+                        bones[1][1] = bone_old.replace("\\Left", "Right").replace("\\L", "R")
                     else:
                         bones[0][1] = bone_old
 
