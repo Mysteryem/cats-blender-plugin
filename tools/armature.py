@@ -74,15 +74,11 @@ class FixArmature(bpy.types.Operator):
         # Check if bone matrix == world matrix, important for xps models
 
         # Add rename bones to reweight bones
-        temp_rename_bones = copy.deepcopy(Bones.bone_rename)
-        temp_reweight_bones = copy.deepcopy(Bones.bone_reweight)
-        temp_list_reweight_bones = copy.deepcopy(Bones.bone_list_weight)
-        temp_list_reparent_bones = copy.deepcopy(Bones.bone_list_parenting)
+        temp_reweight_bones = Bones.new_bone_reweight_dict()
+        temp_list_reweight_bones = Bones.bone_list_weight.copy()
+        temp_list_reparent_bones = Bones.bone_list_parenting.copy()
 
-        for key, value in Bones.bone_rename_fingers.items():
-            temp_rename_bones[key] = value
-
-        for key, value in temp_rename_bones.items():
+        for key, value in Bones.bone_rename.items():
             if key == 'Spine':
                 continue
             list = temp_reweight_bones.get(key)
@@ -95,7 +91,7 @@ class FixArmature(bpy.types.Operator):
 
         # Count objects for loading bar
         steps = 0
-        for key, value in temp_rename_bones.items():
+        for key, value in Bones.bone_rename.items():
             if '\Left' in key or '\L' in key:
                 steps += 2 * len(value)
             else:
@@ -111,7 +107,7 @@ class FixArmature(bpy.types.Operator):
         print('DOUBLE ENTRIES:')
         print('RENAME:')
         list = []
-        for key, value in temp_rename_bones.items():
+        for key, value in Bones.bone_rename.items():
             for name in value:
                 if name.lower() not in list:
                     list.append(name.lower())
@@ -480,7 +476,7 @@ class FixArmature(bpy.types.Operator):
         # Count steps for loading bar again and reset the layers
         steps += len(armature.data.edit_bones)
         for bone in armature.data.edit_bones:
-            if bone.name in Bones.bone_list or bone.name.startswith(tuple(Bones.bone_list_with)):
+            if bone.name in Bones.bone_list or bone.name.startswith(Bones.bone_list_with):
                 if bone.parent is not None:
                     steps += 1
                 else:
@@ -598,34 +594,8 @@ class FixArmature(bpy.types.Operator):
 
             bone.name = name
 
-        # Add conflicting bone names to new list
-        conflicting_bones = []
-        for names in Bones.bone_list_conflicting_names:
-            if '\Left' not in names[1] and '\L' not in names[1]:
-                conflicting_bones.append(names)
-                continue
-
-            names0 = []
-            name1 = ''
-            name2 = ''
-            for name0 in names[0]:
-                names0.append(name0.replace('\Left', 'Left').replace('\left', 'left').replace('\L', 'L').replace('\l', 'l'))
-            if '\Left' in names[1] or '\L' in names[1]:
-                name1 = names[1].replace('\Left', 'Left').replace('\left', 'left').replace('\L', 'L').replace('\l', 'l')
-            if '\Left' in names[2] or '\L' in names[2]:
-                name2 = names[2].replace('\Left', 'Left').replace('\left', 'left').replace('\L', 'L').replace('\l', 'l')
-            conflicting_bones.append((names0, name1, name2))
-
-            for name0 in names[0]:
-                names0.append(name0.replace('\Left', 'Right').replace('\left', 'right').replace('\L', 'R').replace('\l', 'r'))
-            if '\Left' in names[1] or '\L' in names[1]:
-                name1 = names[1].replace('\Left', 'Right').replace('\left', 'right').replace('\L', 'R').replace('\l', 'r')
-            if '\Left' in names[2] or '\L' in names[2]:
-                name2 = names[2].replace('\Left', 'Right').replace('\left', 'right').replace('\L', 'R').replace('\l', 'r')
-            conflicting_bones.append((names0, name1, name2))
-
         # Resolve conflicting bone names
-        for names in conflicting_bones:
+        for names in Bones.bone_list_conflicting_names:
 
             # Search for bone in armature
             bone = None
@@ -661,7 +631,7 @@ class FixArmature(bpy.types.Operator):
         # Rename all the bones
         spines = []
         spine_parts = []
-        for bone_new, bones_old in temp_rename_bones.items():
+        for bone_new, bones_old in Bones.bone_rename.items():
             if '\Left' in bone_new or '\L' in bone_new:
                 bones = [[bone_new.replace('\Left', 'Left').replace('\left', 'left').replace('\L', 'L').replace('\l', 'l'), ''],
                          [bone_new.replace('\Left', 'Right').replace('\left', 'right').replace('\L', 'R').replace('\l', 'r'), '']]
@@ -736,7 +706,7 @@ class FixArmature(bpy.types.Operator):
 
         # Remove un-needed bones, disconnect them and set roll to 0
         for bone in armature.data.edit_bones:
-            if bone.name in Bones.bone_list or bone.name.startswith(tuple(Bones.bone_list_with)):
+            if bone.name in Bones.bone_list or bone.name.startswith(Bones.bone_list_with):
                 if bone.parent:
                     temp_list_reweight_bones[bone.name] = bone.parent.name
                 else:
@@ -952,7 +922,7 @@ class FixArmature(bpy.types.Operator):
             Common.switch('OBJECT')
             Common.set_active(mesh)
 
-            # for bone_name in temp_rename_bones.keys():
+            # for bone_name in Bones.bone_rename.keys():
             #     bone = armature.data.bones.get(bone_name)
             #     if bone:
             #         print(bone_name)
@@ -970,7 +940,7 @@ class FixArmature(bpy.types.Operator):
             print(bones_to_delete)
 
             # Add bones to parent reweight list
-            for name in Bones.bone_reweigth_to_parent:
+            for name in Bones.bone_reweight_to_parent:
                 if '\Left' in name or '\L' in name:
                     bones = [name.replace('\Left', 'Left').replace('\left', 'left').replace('\L', 'L').replace('\l', 'l'),
                              name.replace('\Left', 'Right').replace('\left', 'right').replace('\L', 'R').replace('\l', 'r')]
@@ -998,7 +968,7 @@ class FixArmature(bpy.types.Operator):
                     parent_in_list = True
                     while parent_in_list:
                         parent_in_list = False
-                        for name_tmp in Bones.bone_reweigth_to_parent:
+                        for name_tmp in Bones.bone_reweight_to_parent:
                             if bone_parent.name == name_tmp.replace('\Left', 'Left').replace('\left', 'left').replace('\L', 'L').replace('\l', 'l') \
                                     or bone_parent.name == name_tmp.replace('\Left', 'Right').replace('\left', 'right').replace('\L', 'R').replace('\l', 'r'):
                                 bone_parent = bone_parent.parent

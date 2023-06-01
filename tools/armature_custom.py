@@ -260,7 +260,7 @@ def merge_armatures(base_armature_name, merge_armature_name, mesh_only, mesh_nam
     Common.switch('EDIT')
 
     # Create new bone
-    bones_to_merge = copy.deepcopy(Bones.dont_delete_these_main_bones)
+    bones_to_merge = list(Bones.dont_delete_these_main_bones)
     found = False
     root_name = ''
     for bone in bones_to_merge:
