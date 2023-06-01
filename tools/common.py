@@ -1718,30 +1718,6 @@ def get_tricount(obj: Object):
     return np.sum(polygon_sides - 2)
 
 
-def get_bone_orientations(armature):
-    x_cord = 0
-    y_cord = 1
-    z_cord = 2
-    fbx = False
-    # armature = get_armature()
-    #
-    # for index, bone in enumerate(armature.pose.bones):
-    #     if 'Head' in bone.name:
-    #     #if index == 5:
-    #         bone_pos = bone.matrix
-    #         print(bone_pos)
-    #         world_pos = armature.matrix_world * bone.matrix
-    #         print(world_pos)
-    #         print(bone_pos[0][0], world_pos[0][0])
-    #         if round(abs(bone_pos[0][0]), 4) != round(abs(world_pos[0][0]), 4):
-    #             z_cord = 1
-    #             y_cord = 2
-    #             fbx = True
-    #             break
-
-    return x_cord, y_cord, z_cord, fbx
-
-
 def clean_material_names(mesh):
     for mat_slot in mesh.material_slots:
         mat = mat_slot.material
@@ -1796,16 +1772,14 @@ def ui_refresh():
             time.sleep(0.5)
 
 
-def fix_zero_length_bones(armature, x_cord, y_cord, z_cord):
+def fix_zero_length_bones(armature: Object):
     pre_mode = armature.mode
     set_active(armature)
     switch('EDIT')
 
     for bone in armature.data.edit_bones:
-        if round(bone.head[x_cord], 4) == round(bone.tail[x_cord], 4) \
-                and round(bone.head[y_cord], 4) == round(bone.tail[y_cord], 4) \
-                and round(bone.head[z_cord], 4) == round(bone.tail[z_cord], 4):
-            bone.tail[z_cord] += 0.1
+        if all(round(h, 4) == round(t, 4) for h, t in zip(bone.head, bone.tail)):
+            bone.tail.z += 0.1
 
     switch(pre_mode)
 

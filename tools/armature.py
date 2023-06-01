@@ -68,8 +68,10 @@ class FixArmature(bpy.types.Operator):
             except AttributeError:
                 is_vrm = False
 
+        # TODO: Supposedly there may be some issues with xps models where their bones have a different 'up' direction?
+        #  The code below this comment was deleted because it had been disabled for years, so whatever the issue was, it
+        #  wasn't being fixed for years.
         # Check if bone matrix == world matrix, important for xps models
-        x_cord, y_cord, z_cord, fbx = Common.get_bone_orientations(armature)
 
         # Add rename bones to reweight bones
         temp_rename_bones = copy.deepcopy(Bones.bone_rename)
@@ -337,7 +339,7 @@ class FixArmature(bpy.types.Operator):
                 mesh.animation_data_clear()
 
         # Fixes bones disappearing, prevents bones from having their tail and head at the exact same position
-        Common.fix_zero_length_bones(armature, x_cord, y_cord, z_cord)
+        Common.fix_zero_length_bones(armature)
 
         # Apply transforms of this model
         Common.apply_transforms()
@@ -785,8 +787,8 @@ class FixArmature(bpy.types.Operator):
             # Set new Chest bone to new position
             chest.tail = chest_top
             chest.head = spine.head
-            chest.head[z_cord] = spine.head[z_cord] + (chest_top[z_cord] - spine.head[z_cord]) / 2
-            chest.head[y_cord] = spine.head[y_cord] + (chest_top[y_cord] - spine.head[y_cord]) / 2
+            chest.head.z = spine.head.z + (chest_top.z - spine.head.z) / 2
+            chest.head.y = spine.head.y + (chest_top.y - spine.head.y) / 2
 
             # Adjust spine bone position
             spine.tail = chest.head
@@ -850,16 +852,15 @@ class FixArmature(bpy.types.Operator):
                     neck.head = chest.tail
                     neck.tail = head.head
 
-                    if neck.head[z_cord] == neck.tail[z_cord]:
-                        neck.tail[z_cord] += 0.1
+                    if neck.head.z == neck.tail.z:
+                        neck.tail.z += 0.1
 
         # Straighten up the head bone
         if 'Head' in armature.data.edit_bones:
             head = armature.data.edit_bones.get('Head')
-            head.tail[x_cord] = head.head[x_cord]
-            head.tail[y_cord] = head.head[y_cord]
-            if head.tail[z_cord] < head.head[z_cord]:
-                head.tail[z_cord] = head.head[z_cord] + 0.1
+            head.tail.xy = head.head.xy
+            if head.tail.z < head.head.z:
+                head.tail.z = head.head.z + 0.1
 
         # Correct arm bone positions for better looks
         Common.correct_bone_positions()
@@ -878,35 +879,34 @@ class FixArmature(bpy.types.Operator):
                             # Fixing the hips
 
                             # Put Hips in the center of the leg bones
-                            hips.head[x_cord] = (right_leg.head[x_cord] + left_leg.head[x_cord]) / 2
+                            hips.head.x = (right_leg.head.x + left_leg.head.x) / 2
 
                             # Put Hips at 33% between spine and legs
-                            hips.head[z_cord] = left_leg.head[z_cord] + (spine.head[z_cord] - left_leg.head[z_cord]) * 0.33
+                            hips.head.z = left_leg.head.z + (spine.head.z - left_leg.head.z) * 0.33
 
                             # If Hips are below or at the leg bones, put them above
-                            if hips.head[z_cord] <= right_leg.head[z_cord]:
-                                hips.head[z_cord] = right_leg.head[z_cord] + 0.1
+                            if hips.head.z <= right_leg.head.z:
+                                hips.head.z = right_leg.head.z + 0.1
 
                             # Make Hips point straight up
-                            hips.tail[x_cord] = hips.head[x_cord]
-                            hips.tail[y_cord] = hips.head[y_cord]
-                            hips.tail[z_cord] = spine.head[z_cord]
+                            hips.tail.xy = hips.head.xy
+                            hips.tail.z = spine.head.z
 
-                            if hips.tail[z_cord] < hips.head[z_cord]:
-                                hips.tail[z_cord] = hips.tail[z_cord] + 0.1
+                            if hips.tail.z < hips.head.z:
+                                hips.tail.z += 0.1
 
                             # Make legs bend very slightly forward
                             right_knee = armature.data.edit_bones.get('Right knee')
                             left_knee = armature.data.edit_bones.get('Left knee')
+                            leg_vectors = []
                             if left_knee:
-                                if round(left_leg.head[x_cord], 4) == round(left_knee.head[x_cord], 4) \
-                                        and round(left_leg.head[y_cord], 4) == round(left_knee.head[y_cord], 4):
-                                    print('FIXING LEG')
-                                    left_knee.head[y_cord] -= 0.001
+                                leg_vectors.append((left_leg.head, left_knee.head))
                             if right_knee:
-                                if round(right_leg.head[x_cord], 4) == round(right_knee.head[x_cord], 4) \
-                                        and round(right_leg.head[y_cord], 4) == round(right_knee.head[y_cord], 45):
-                                    right_knee.head[y_cord] -= 0.001
+                                leg_vectors.append((right_leg.head, right_knee.head))
+                            for leg_head, knee_head in leg_vectors:
+                                if all(round(leg, 4) == round(knee, 4) for leg, knee in zip(leg_head.xy, knee_head.xy)):
+                                    print('FIXING LEG')
+                                    knee_head.y -= 0.001
 
         # Function: Reweight all eye children into the eyes
         def add_eye_children(eye_bone, parent_name):
@@ -931,7 +931,7 @@ class FixArmature(bpy.types.Operator):
             # print(matrix_final[2][3])
             # print(fbx)
 
-            if not fbx and matrix_final[2][3] < 0:
+            if matrix_final[2][3] < 0:
                 # print(hips.head[0], hips.head[1], hips.head[2])
                 # Rotation of -180 around the X-axis
                 rot_x_neg180 = Matrix.Rotation(-math.pi, 4, 'X')
@@ -941,7 +941,7 @@ class FixArmature(bpy.types.Operator):
                     mesh.rotation_euler = (math.radians(180), 0, 0)
 
         # Fixes bones disappearing, prevents bones from having their tail and head at the exact same position
-        Common.fix_zero_length_bones(armature, x_cord, y_cord, z_cord)
+        Common.fix_zero_length_bones(armature)
 
         # Merged bones that should be deleted
         bones_to_delete = []
