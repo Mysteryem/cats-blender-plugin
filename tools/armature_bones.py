@@ -1050,7 +1050,7 @@ _bone_rename: dict[str, list[str]] = {
 #   Left/Right = \\Left
 #   L/R = \\L
 ################################
-_bone_reweight: dict[str, list[str]] = {
+bone_reweight: dict[str, list[str]] = {
     "Hips": [
         "LowerBody1",
         "Lowerbody2",
@@ -1689,11 +1689,6 @@ _bone_reweight: dict[str, list[str]] = {
         "DEF_Bust_02_\\L",
     ]
 }
-
-
-def new_bone_reweight_dict() -> dict[str, list[str]]:
-    return {k: v.copy() for k, v in _bone_reweight}
-
 
 # Secondary reweight list.
 bone_list_weight: dict[str, str] = {
@@ -2336,3 +2331,23 @@ _bone_rename_fingers: dict[str, list[str]] = {
 bone_rename: dict[str, list[str]] = _bone_rename | _bone_rename_fingers
 del _bone_rename
 del _bone_rename_fingers
+
+
+# Add items from bone_rename to bone_reweight.
+def _add_bone_rename_to_bone_reweight():
+    for key, value in bone_rename.items():
+        # Spine is excluded from bone reweight. Not sure why.
+        if key == "Spine":
+            continue
+        bone_reweight_list = bone_reweight.get(key)
+        if not bone_reweight_list:
+            bone_reweight[key] = value
+        else:
+            for name in value:
+                # todo: Can bone_list instead be a set?
+                if name not in bone_reweight_list:
+                    bone_reweight_list.append(name)
+
+
+_add_bone_rename_to_bone_reweight()
+del _add_bone_rename_to_bone_reweight

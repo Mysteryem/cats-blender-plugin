@@ -73,21 +73,8 @@ class FixArmature(bpy.types.Operator):
         #  wasn't being fixed for years.
         # Check if bone matrix == world matrix, important for xps models
 
-        # Add rename bones to reweight bones
-        temp_reweight_bones = Bones.new_bone_reweight_dict()
         temp_list_reweight_bones = Bones.bone_list_weight.copy()
         temp_list_reparent_bones = Bones.bone_list_parenting.copy()
-
-        for key, value in Bones.bone_rename.items():
-            if key == 'Spine':
-                continue
-            list = temp_reweight_bones.get(key)
-            if not list:
-                temp_reweight_bones[key] = value
-            else:
-                for name in value:
-                    if name not in list:
-                        temp_reweight_bones.get(key).append(name)
 
         # Count objects for loading bar
         steps = 0
@@ -96,7 +83,7 @@ class FixArmature(bpy.types.Operator):
                 steps += 2 * len(value)
             else:
                 steps += len(value)
-        for key, value in temp_reweight_bones.items():
+        for key, value in Bones.bone_reweight.items():
             if "\\L" in key:
                 steps += 2 * len(value)
             else:
@@ -115,7 +102,7 @@ class FixArmature(bpy.types.Operator):
                     print(key + " | " + name)
         print('REWEIGHT:')
         list = []
-        for key, value in temp_reweight_bones.items():
+        for key, value in Bones.bone_reweight.items():
             for name in value:
                 if name.lower() not in list:
                     list.append(name.lower())
@@ -1015,7 +1002,7 @@ class FixArmature(bpy.types.Operator):
                 if vg_name not in vg_to_lower_name_to_vg_name:
                     vg_to_lower_name_to_vg_name[vg_name.lower()] = vg_name
             twist_bone_names = {"handtwist_l", "handtwist_r", "armtwist_l", "armtwist_r"}
-            for bone_new, bones_old in temp_reweight_bones.items():
+            for bone_new, bones_old in Bones.bone_reweight.items():
                 bone_new_has_replacement_pattern = "\\L" in bone_new
                 if bone_new_has_replacement_pattern:
                     bone_new_l = bone_new.replace("\\Left", "Left").replace("\\L", "L")
