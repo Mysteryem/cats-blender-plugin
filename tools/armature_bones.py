@@ -1,10 +1,14 @@
 # GPL License
+# Because there is no frozendict and because MappingProxyType is slower to access, we expose the dicts as generic
+# Mappings to try and indicate that they shouldn't be modified.
+#
+from collections.abc import Mapping
 
 bone_list: frozenset[str] = frozenset({"ControlNode", "ParentNode", "Center", "CenterTip", "Groove", "Waist", "EyesTip",
                                        "LowerBodyTip", "UpperBody2Tip", "GrooveTip", "NeckTip"})
 bone_list_with: tuple[str, ...] = ("_Shadow_", "_Dummy_", "Dummy_", "WaistCancel", "LegIKParent", "LegIK", "ShoulderP_",
                                    "EyeTip_", "HandDummy_", "SleeveShoulderIK_", "Cf_O_Root_")
-bone_list_parenting: dict[str, str] = {
+bone_list_parenting: Mapping[str, str] = {
     "Spine": "Hips",
     "Chest": "Spine",
     "Upper Chest": "Chest",
@@ -122,7 +126,7 @@ dont_delete_these_main_bones: frozenset[str] = frozenset({
     "RingFinger1_R", "RingFinger2_R", "RingFinger3_R",
     "LittleFinger1_R", "LittleFinger2_R", "LittleFinger3_R",
 })
-bone_list_rename_unknown_side: dict[str, str] = {
+bone_list_rename_unknown_side: Mapping[str, str] = {
     "Shoulder": "shoulder",
     "Shoulder_001": "shoulder",
 }
@@ -1050,7 +1054,7 @@ _bone_rename: dict[str, list[str]] = {
 #   Left/Right = \\Left
 #   L/R = \\L
 ################################
-bone_reweight: dict[str, list[str]] = {
+bone_reweight: Mapping[str, list[str]] = {
     "Hips": [
         "LowerBody1",
         "Lowerbody2",
@@ -1691,7 +1695,7 @@ bone_reweight: dict[str, list[str]] = {
 }
 
 # Secondary reweight list.
-bone_list_weight: dict[str, str] = {
+bone_list_weight: Mapping[str, str] = {
     # Other model fixes
     "DEF_Zipper": "Zipper",
     "B_F_Mune01": "Breasts",
@@ -2328,7 +2332,7 @@ _bone_rename_fingers: dict[str, list[str]] = {
     ]
 }
 
-bone_rename: dict[str, list[str]] = _bone_rename | _bone_rename_fingers
+bone_rename: Mapping[str, list[str]] = _bone_rename | _bone_rename_fingers
 del _bone_rename
 del _bone_rename_fingers
 
